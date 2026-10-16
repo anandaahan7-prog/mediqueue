@@ -1,0 +1,40 @@
+{
+  "dispatch": {
+    "unsafe": {
+      "trials": 30,
+      "workers": 6,
+      "conflicts": 45,
+      "conflict_rate": 1.5,
+      "avg_ms": 21.99934222220084,
+      "max_ms": 94.99399999913294
+    },
+    "safe": {
+      "trials": 30,
+      "workers": 6,
+      "conflicts": 0,
+      "conflict_rate": 0.0,
+      "avg_ms": 34.50948611106368,
+      "max_ms": 111.28190000090399
+    }
+  },
+  "beds": {
+    "unsafe": {
+      "trials": 30,
+      "workers": 8,
+      "beds": 3,
+      "conflicts": 50,
+      "patients_without_real_bed": 135,
+      "avg_ms": 30.293888333335417,
+      "max_ms": 127.48579999970389
+    },
+    "safe": {
+      "trials": 30,
+      "workers": 8,
+      "beds": 3,
+      "conflicts": 0,
+      "patients_without_real_bed": 0,
+      "avg_ms": 48.09502500017212,
+      "max_ms": 157.30620000249473
+    }
+  }
+}

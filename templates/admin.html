@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block heading %}Reports &amp; settings{% endblock %}
+{% block subheading %}How today is going, how the scheduler and the AI were evaluated, and the concurrency test.{% endblock %}
+{% block content %}
+<div class="stat-grid" id="admin-stats"></div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-head"><h3>Average wait by triage level</h3><span class="hint">all visits in the database</span></div>
+    <div id="chart-wait-esi"></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>Arrivals today by hour</h3></div>
+    <div id="chart-hourly"></div>
+  </div>
+</div>
+
+<h2 class="page-section">Scheduler evaluation <span class="muted">· {{ simulation.config.days if simulation else '' }} simulated 12-hour shifts, {{ simulation.config.doctors if simulation else '' }} doctors</span></h2>
+{% if simulation %}
+<div class="card">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Policy</th><th class="num">Mean wait</th><th class="num">ESI 1–2 wait</th><th class="num">95th pct wait, ESI 4–5</th>
+      <th class="num">Worst wait / day</th>{% for l in range(1,6) %}<th class="num">ESI {{ l }} on time</th>{% endfor %}<th class="num">Preemptions / day</th></tr></thead>
+    <tbody>
+    {% for key, p in simulation.policies.items() %}
+      <tr class="{{ 'selected' if key == 'mediqueue' }}">
+        <td><b>{{ p.label }}</b></td>
+        <td class="num">{{ '%.1f'|format(p.mean_wait) }}</td>
+        <td class="num">{{ '%.1f'|format(p.critical_wait) }}</td>
+        <td class="num">{{ '%.0f'|format(p.low_priority_p95) }}</td>
+        <td class="num">{{ '%.0f'|format(p.max_wait) }}</td>
+        {% for x in p.within_target %}<td class="num">{{ '%.0f'|format(x * 100) }}%</td>{% endfor %}
+        <td class="num">{{ '%.1f'|format(p.preemptions_per_day) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="card-sub" style="margin:12px 0 0">Waits are minutes until a doctor first sees the patient, grouped by the patient's <b>true</b> urgency. Run <code>python simulate.py</code> to regenerate.</p>
+</div>
+<div class="grid-2 section-gap">
+  <div class="card"><div class="card-head"><h3>Wait for critical vs low-priority patients</h3></div><div id="chart-policies"></div></div>
+  <div class="card"><div class="card-head"><h3>Choosing the aging interval</h3><span class="hint">MediQueue policy</span></div><div id="chart-aging"></div></div>
+</div>
+{% else %}
+<div class="card"><div class="empty">Run <code>python simulate.py</code> to generate the evaluation.</div></div>
+{% endif %}
+
+<h2 class="page-section">AI models</h2>
+<div class="grid-3">
+  {% if metrics %}
+  <div class="card">
+    <div class="card-head"><h3>Triage suggestion</h3><span class="hint">5-fold CV, {{ metrics.samples }} cases</span></div>
+    <div class="mini-stats" style="grid-template-columns:1fr 1fr">
+      <div class="mini-stat"><span>Accuracy</span><b>{{ '%.1f'|format(metrics.safe_accuracy * 100) }}%</b></div>
+      <div class="mini-stat"><span>Under-triage</span><b>{{ '%.1f'|format(metrics.safe_under_triage * 100) }}%</b></div>
+      <div class="mini-stat"><span>NEWS2 only</span><b>{{ '%.1f'|format(metrics.baseline_accuracy * 100) }}%</b></div>
+      <div class="mini-stat"><span>Within ±1 level</span><b>{{ '%.1f'|format(metrics.within_one * 100) }}%</b></div>
+    </div>
+    <p class="card-sub" style="margin:0">With the safety margin and red-flag rules. Plain model: {{ '%.1f'|format(metrics.accuracy * 100) }}% accuracy, {{ '%.1f'|format(metrics.under_triage * 100) }}% under-triage.</p>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>Consultation time</h3></div>
+    <div class="mini-stats" style="grid-template-columns:1fr 1fr">
+      <div class="mini-stat"><span>Mean abs. error</span><b>{{ '%.1f'|format(metrics.time_mae) }} min</b></div>
+      <div class="mini-stat"><span>Within 5 min</span><b>{{ '%.0f'|format(metrics.time_within_5 * 100) }}%</b></div>
+    </div>
+    <p class="card-sub" style="margin:0">Average consultation in the data: {{ '%.0f'|format(metrics.time_mean) }} min.</p>
+  </div>
+  {% endif %}
+  {% if simulation and simulation.wait_model %}
+  {% set w = simulation.wait_model %}
+  <div class="card">
+    <div class="card-head"><h3>Waiting-time estimate</h3><span class="hint">{{ w.test_rows }} test patients</span></div>
+    <div class="mini-stats" style="grid-template-columns:1fr 1fr">
+      <div class="mini-stat"><span>Schedule replay</span><b>±{{ '%.1f'|format(w.plain.mae) }} min</b></div>
+      <div class="mini-stat"><span>With ML correction</span><b>±{{ '%.1f'|format(w.model.mae) }} min</b></div>
+    </div>
+    <p class="card-sub" style="margin:0">Mean absolute error of the time shown on the waiting-room display.</p>
+  </div>
+  {% endif %}
+</div>
+<div class="grid-2 section-gap">
+  <div class="card"><div class="card-head"><h3>AI suggestion vs nurse's final level</h3><span class="hint">from the visits table</span></div><div id="agreement"></div></div>
+  <div class="card"><div class="card-head"><h3>What the triage model looks at</h3></div><div id="chart-importance"></div></div>
+</div>
+
+<h2 class="page-section" id="race">Concurrency test</h2>
+<div class="split">
+  <div class="card">
+    <div class="card-head"><h3>Many staff clicking at the same moment</h3>
+      <form method="post" action="{{ url_for('admin_race_test') }}"><input type="hidden" name="trials" value="15">
+        <button class="btn btn-primary btn-sm" onclick="this.textContent='Running… (~10 s)'">Run test again</button></form>
+    </div>
+    {% if race %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Scenario</th><th>Mode</th><th class="num">Threads</th><th class="num">Trials</th><th class="num">Conflicts</th><th class="num">Avg time</th></tr></thead>
+      <tbody>
+        {% for scen, label in [('dispatch', 'Doctors press “Call next”'), ('beds', 'Admissions, 3 free beds')] %}
+          {% for mode in ['unsafe', 'safe'] %}{% set x = race[scen][mode] %}
+          <tr><td>{{ label }}</td><td>{% if mode == 'safe' %}<span class="badge ok">with lock</span>{% else %}<span class="badge bad">no lock</span>{% endif %}</td>
+            <td class="num">{{ x.workers }}</td><td class="num">{{ x.trials }}</td>
+            <td class="num {{ 'worst' if x.conflicts else 'best' }}">{{ x.conflicts }}</td><td class="num">{{ '%.1f'|format(x.avg_ms) }} ms</td></tr>
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table></div>
+    <p class="card-sub" style="margin:12px 0 0">Conflict = the same patient given to two doctors, or the same bed given to two patients. Runs on a scratch database, never on live data.</p>
+    {% else %}<div class="empty">Not run yet.</div>{% endif %}
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>Scheduler settings</h3></div>
+    <form method="post" action="{{ url_for('admin_settings') }}" class="stack" style="gap:12px">
+      <div class="field"><label>Aging interval (minutes)</label>
+        <input type="number" name="aging_minutes" min="5" max="240" value="{{ aging }}" id="aging-input"></div>
+      <p class="muted" style="font-size:12.5px">A waiting ESI 4–5 patient moves up one level every time this many minutes pass, up to level 3. We chose 30 after the aging sweep above.</p>
+      <button class="btn btn-primary">Save</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='charts.js') }}"></script>{% endblock %}

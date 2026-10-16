@@ -1,0 +1,7 @@
+tests/
+docs/
+__pycache__/
+*.pyc
+mediqueue.db*
+simulate.py
+ai/train.py

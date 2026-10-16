@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+mediqueue.db
+mediqueue.db-*
+.vercel/
+.env
