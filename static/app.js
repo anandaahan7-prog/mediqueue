@@ -190,7 +190,8 @@ async function refreshQueueTable() {
 function initDoctor() {
   const me = Number(document.body.dataset.me);
   poll(async () => {
-    const [s, patient] = await Promise.all([getJSON('/api/state'), getJSON('/api/doctor/patient')]);
+    const s = await getJSON('/api/state');
+    const patient = s.my_patient;
     const mine = s.doctors.find(d => d.id === me);
 
     // ESI 1 preemption banner

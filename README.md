@@ -1,5 +1,15 @@
 # MediQueue – AI-assisted emergency department queue
 
+**Live demo:** https://mediqueue-eight-tan.vercel.app &nbsp;·&nbsp; password for every account: `demo123`
+
+Operating Systems course project.
+
+| Team member | Register number |
+|---|---|
+| Aahan Anand | 24BCE2564 |
+| Ayush Anupam Sahu | 24BAI0123 |
+| Ankit Dhupal | 24BCB0142 |
+
 A web app for a hospital casualty ward. Nurses triage patients with help from an AI model, doctors press
 **“Call next patient”** and a priority scheduler decides who they see, and the waiting room gets a live display
 with estimated waits.
@@ -41,6 +51,21 @@ python -m ai.train      # triage + consult-time models, writes models/metrics.js
 python simulate.py      # policy comparison, aging sweep, wait-time model (~30 s)
 python race_test.py     # concurrency stress test
 python -m unittest tests.test_system -v
+```
+
+## Deployment (Vercel)
+
+The app is deployed on Vercel as a Python (Flask) serverless function, using `requirements.txt`, `.python-version`
+and `.vercelignore` in this repo. Vercel only allows writing to `/tmp`, so each server instance creates and seeds its
+own demo database there on start-up (see `ensure_database()` in `app.py` and `DB_PATH` in `db.py`).
+
+Limitation: if Vercel starts more than one instance (for example under several simultaneous requests), the instances
+do not share data, so the live link is meant for a single-user walkthrough. For the full multi-screen demo
+(nurse, doctor and waiting room at the same time) run it locally with `python app.py`, or point `DB_PATH` at a shared
+database. Every response carries an `X-MediQueue-Instance` header showing which instance answered.
+
+```bash
+npx vercel deploy --prod
 ```
 
 ## Suggested demo (8–10 minutes)

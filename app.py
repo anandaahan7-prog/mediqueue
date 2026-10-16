@@ -242,7 +242,12 @@ def home():
 @app.route("/api/state")
 @login_required()
 def api_state():
-    return jsonify(build_state(get_db()))
+    conn = get_db()
+    state = build_state(conn)
+    if g.user["role"] == "doctor":
+        # sent in the same response so the console never mixes two different snapshots
+        state["my_patient"] = current_patient_of(conn, g.user["user_id"])
+    return jsonify(state)
 
 
 # ---------------------------------------------------------------- triage desk (nurse)
@@ -359,19 +364,23 @@ def doctor():
     return render_template("doctor.html", page="doctor")
 
 
-@app.route("/api/doctor/patient")
-@login_required("doctor")
-def doctor_patient():
-    row = get_db().execute("""SELECT v.*, p.name, p.age, p.sex FROM visits v JOIN patients p ON p.patient_id = v.patient_id
-                              WHERE v.doctor_id = ? AND v.status = 'in_consult'""", (g.user["user_id"],)).fetchone()
+def current_patient_of(conn, doctor_id):
+    row = conn.execute("""SELECT v.*, p.name, p.age, p.sex FROM visits v JOIN patients p ON p.patient_id = v.patient_id
+                          WHERE v.doctor_id = ? AND v.status = 'in_consult'""", (doctor_id,)).fetchone()
     if row is None:
-        return jsonify(None)
+        return None
     data = {k: row[k] for k in row.keys()}
     data["complaint_label"] = COMPLAINT_LABELS[row["complaint"]]
     data["consciousness_label"] = CONSCIOUSNESS[row["consciousness"]]
     data["waited"] = round(minutes_between(row["arrived_at"], None) - minutes_between(row["first_seen_at"], None))
     data["done"] = round((row["consult_done_min"] or 0) + minutes_between(row["consult_started_at"]))
-    return jsonify(data)
+    return data
+
+
+@app.route("/api/doctor/patient")
+@login_required("doctor")
+def doctor_patient():
+    return jsonify(current_patient_of(get_db(), g.user["user_id"]))
 
 
 @app.route("/doctor/duty", methods=["POST"])
