@@ -9,14 +9,9 @@ Logins (password demo123): nurse priya, doctors rao / mehta / iyer / khan, admin
 
 import json
 import os
-import time
 from functools import wraps
 from pathlib import Path
 
-# hospital time: Vercel servers run on UTC, but the queue, the logs and "today" should be Indian time
-os.environ.setdefault("TZ", "Asia/Kolkata")
-if hasattr(time, "tzset"):
-    time.tzset()
 
 from flask import Flask, flash, g, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
@@ -25,7 +20,9 @@ import beds
 import dispatch
 from ai import triage_model, wait_model
 from ai.dataset import COMPLAINT_LABELS, COMPLAINTS, CONSCIOUSNESS
-from db import connect, log_event, minutes_between, setting, stamp
+from datetime import timedelta
+
+from db import connect, log_event, minutes_between, now, setting, stamp, today as today_date
 from scheduler import AGING_MINUTES, TARGET_MINUTES, effective_level, estimate_waits, order_queue
 
 BASE = Path(__file__).resolve().parent
@@ -45,6 +42,15 @@ def ensure_database():
 
 
 ensure_database()
+
+# each server process gets an id; handy for seeing which Vercel instance answered a request
+INSTANCE_ID = os.urandom(4).hex()
+
+
+@app.after_request
+def tag_instance(response):
+    response.headers["X-MediQueue-Instance"] = INSTANCE_ID
+    return response
 
 VITAL_FIELDS = ["heart_rate", "systolic_bp", "resp_rate", "spo2", "temperature", "consciousness", "pain"]
 
@@ -128,9 +134,9 @@ def build_state(conn):
     eta = {}
     if on_duty:
         plain = estimate_waits(waiting_jobs, busy_until, free_doctors, now_min, aging)
-        recent = conn.execute("SELECT COUNT(*) FROM visits WHERE arrived_at >= datetime('now', 'localtime', '-60 minutes')"
-                              ).fetchone()[0]
-        hour = time.localtime().tm_hour + time.localtime().tm_min / 60
+        recent = conn.execute("SELECT COUNT(*) FROM visits WHERE arrived_at >= ?",
+                              (stamp(now() - timedelta(minutes=60)),)).fetchone()[0]
+        hour = now().hour + now().minute / 60
         feats = [wait_model.features(j, waiting_jobs, now_min, len(in_consult), len(on_duty), recent,
                                      plain.get(j["id"], 0.0), hour, aging) for j in waiting_jobs]
         for j, ml in zip(waiting_jobs, wait_model.predict(feats)):
@@ -178,10 +184,10 @@ def build_state(conn):
         SELECT COUNT(*) AS seen,
                AVG((julianday(first_seen_at) - julianday(arrived_at)) * 1440) AS avg_wait,
                AVG(CASE WHEN esi <= 2 THEN (julianday(first_seen_at) - julianday(arrived_at)) * 1440 END) AS critical_wait,
-               (SELECT COUNT(*) FROM visits WHERE esi <> ai_esi AND date(arrived_at) = date('now', 'localtime')) AS overrides
-        FROM visits WHERE first_seen_at IS NOT NULL AND date(arrived_at) = date('now', 'localtime')""").fetchone()
-    left = conn.execute("SELECT COUNT(*) FROM visits WHERE status = 'left' AND date(arrived_at) = date('now', 'localtime')"
-                        ).fetchone()[0]
+               (SELECT COUNT(*) FROM visits WHERE esi <> ai_esi AND date(arrived_at) = :today) AS overrides
+        FROM visits WHERE first_seen_at IS NOT NULL AND date(arrived_at) = :today""", {"today": today_date()}).fetchone()
+    left = conn.execute("SELECT COUNT(*) FROM visits WHERE status = 'left' AND date(arrived_at) = ?",
+                        (today_date(),)).fetchone()[0]
     events = conn.execute("""SELECT e.at, e.kind, e.detail, v.token, u.name AS who FROM events e
                              LEFT JOIN visits v ON v.visit_id = e.visit_id
                              LEFT JOIN users u ON u.user_id = e.user_id ORDER BY e.event_id DESC LIMIT 14""").fetchall()
@@ -284,7 +290,7 @@ def triage_submit():
     try:
         cur = conn.execute("INSERT INTO patients (name, age, sex, phone, created_at) VALUES (?, ?, ?, ?, ?)",
                            (f["name"].strip(), v["age"], f["sex"], f.get("phone") or None, stamp()))
-        count = conn.execute("SELECT COUNT(*) FROM visits WHERE date(arrived_at) = date('now', 'localtime')").fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM visits WHERE date(arrived_at) = ?", (today_date(),)).fetchone()[0]
         token = f"T{count + 1:03d}"
         while conn.execute("SELECT 1 FROM visits WHERE token = ?", (token,)).fetchone():
             count += 1
@@ -464,7 +470,7 @@ def admin_reports():
                                     AVG((julianday(first_seen_at) - julianday(arrived_at)) * 1440) AS wait
                              FROM visits WHERE first_seen_at IS NOT NULL GROUP BY esi ORDER BY esi""").fetchall()
     hourly = conn.execute("""SELECT CAST(strftime('%H', arrived_at) AS INTEGER) AS hour, COUNT(*) AS n
-                             FROM visits WHERE date(arrived_at) = date('now', 'localtime') GROUP BY hour""").fetchall()
+                             FROM visits WHERE date(arrived_at) = ? GROUP BY hour""", (today_date(),)).fetchall()
     agreement = conn.execute("SELECT ai_esi, esi, COUNT(*) AS n FROM visits GROUP BY ai_esi, esi").fetchall()
     return jsonify({
         "by_esi": [dict(r) for r in by_esi],

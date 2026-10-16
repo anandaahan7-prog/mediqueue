@@ -12,9 +12,7 @@ The UPDATE also re-checks `status = 'waiting'`, so even a bug elsewhere cannot a
 patient twice - the second update would simply change 0 rows.
 """
 
-import time
-
-from db import log_event, minutes_between, parse, setting, stamp
+from db import log_event, minutes_between, now, parse, setting, stamp
 from scheduler import AGING_MINUTES, pick_next, preemption_target
 
 
@@ -33,7 +31,8 @@ def as_job(row):
 
 
 def now_minutes():
-    return time.time() / 60
+    # same naive-IST convention as the stored timestamps, so differences are always correct
+    return now().timestamp() / 60
 
 
 class DispatchError(Exception):
