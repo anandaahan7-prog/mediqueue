@@ -2,7 +2,7 @@
 
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # MEDIQUEUE_DB lets the tests point the app at a throwaway database.
@@ -29,8 +29,17 @@ def init_db(path=None):
     return conn
 
 
+# The hospital runs on Indian time no matter where the server is (Vercel runs on UTC).
+# All timestamps are stored as naive IST strings.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
 def now():
-    return datetime.now()
+    return datetime.now(IST).replace(tzinfo=None)
+
+
+def today():
+    return now().strftime("%Y-%m-%d")
 
 
 def stamp(dt=None):

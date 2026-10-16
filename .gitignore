@@ -4,3 +4,5 @@ mediqueue.db
 mediqueue.db-*
 .vercel/
 .env
+
+.vercel
