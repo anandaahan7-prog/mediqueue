@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · MediQueue ED</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem('mq-theme') || 'light'; } catch (e) {}</script>
+</head>
+<body class="login-page">
+  <div class="login-wrap">
+    <div class="login-card card">
+      <div class="brand-row">
+        <div class="logo-mark big"><svg viewBox="0 0 24 24"><path d="M9.5 3h5v6.5H21v5h-6.5V21h-5v-6.5H3v-5h6.5z" fill="currentColor"/></svg></div>
+        <div><h2>MediQueue</h2><p class="muted">Emergency department queue &amp; triage</p></div>
+      </div>
+      {% with messages = get_flashed_messages() %}
+        {% for msg in messages %}<div class="callout danger flash">{{ msg }}</div>{% endfor %}
+      {% endwith %}
+      <form method="post" class="stack" style="gap:14px">
+        <div class="field"><label>Username</label><input name="username" autofocus required autocomplete="username"></div>
+        <div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password"></div>
+        <button class="btn btn-primary btn-lg" style="justify-content:center">Sign in</button>
+      </form>
+      <div class="demo-logins">
+        <p class="section-title" style="margin-top:20px">Demo accounts · password <code>demo123</code></p>
+        <div class="sample-row">
+          <span class="chip static">priya · nurse</span>
+          <span class="chip static">rao · doctor</span>
+          <span class="chip static">iyer · doctor</span>
+          <span class="chip static">admin</span>
+        </div>
+      </div>
+    </div>
+    <a class="board-link" href="{{ url_for('board') }}">Open waiting-room display →</a>
+  </div>
+</body>
+</html>

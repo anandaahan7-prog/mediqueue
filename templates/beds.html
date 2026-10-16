@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Bed board{% endblock %}
+{% block heading %}Observation bed board{% endblock %}
+{% block subheading %}The beds behave like a counting semaphore: admitting takes one, a cleaned bed goes straight to the next boarding patient.{% endblock %}
+{% block content %}
+<div class="stat-grid" id="bed-stats"></div>
+<div class="split">
+  <div class="card">
+    <div class="card-head"><h3>Beds</h3><span class="hint">Release → cleaning → Mark clean</span></div>
+    <div class="bed-grid" id="bed-grid"></div>
+  </div>
+  <div class="stack">
+    <div class="card">
+      <div class="card-head"><h3>Boarding queue</h3><span class="badge warn" id="boarding-count">0</span></div>
+      <p class="card-sub">Admitted by a doctor but no bed free yet. Most urgent first.</p>
+      <div id="boarding" class="queue-list"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>How allocation is kept safe</h3></div>
+      <p style="font-size:13px;color:var(--text-2)">Every admission and every “Mark clean” runs inside one database transaction that holds the write lock.
+        Two staff members clicking at the same moment are served one after the other, so a bed can never be given to two patients.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}

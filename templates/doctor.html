@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Doctor console{% endblock %}
+{% block heading %}{{ me.name }} · {{ me.room }}{% endblock %}
+{% block subheading %}Press “Call next patient” when you are free – the dispatcher decides who it is.{% endblock %}
+{% block content %}
+<div id="preempt-banner" class="callout danger hidden" style="margin-bottom:18px"></div>
+
+<div class="split">
+  <div class="stack">
+    <div class="card" id="current-card"></div>
+    <div class="card">
+      <div class="card-head"><h3>Up next</h3><span class="hint">same order the dispatcher will use</span></div>
+      <div id="up-next" class="queue-list"></div>
+    </div>
+  </div>
+  <div class="stack">
+    <div class="card">
+      <div class="card-head"><h3>Shift</h3>
+        <form method="post" action="{{ url_for('doctor_duty') }}">
+          <button class="btn btn-sm {{ 'btn-danger-soft' if me.on_duty else 'btn-primary' }}">{{ 'Go off duty' if me.on_duty else 'Start shift' }}</button>
+        </form>
+      </div>
+      <p class="muted" style="font-size:13px">{% if me.on_duty %}You are on duty and counted in the waiting-time estimates.{% else %}You are off duty – patients are not routed to you.{% endif %}</p>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Other doctors</h3></div>
+      <div id="colleagues" class="stack" style="gap:8px"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Department log</h3></div>
+      <div class="log" id="event-log"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

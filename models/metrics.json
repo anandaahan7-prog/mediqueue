@@ -1,0 +1,143 @@
+{
+  "samples": 3000,
+  "class_counts": [
+    292,
+    838,
+    736,
+    667,
+    467
+  ],
+  "accuracy": 0.8616666666666667,
+  "macro_f1": 0.8679481951079124,
+  "within_one": 0.991,
+  "under_triage": 0.08833333333333333,
+  "over_triage": 0.05,
+  "safe_accuracy": 0.8276666666666667,
+  "safe_macro_f1": 0.8366394591717595,
+  "safe_under_triage": 0.052333333333333336,
+  "safe_over_triage": 0.12,
+  "safe_confusion": [
+    [
+      256,
+      34,
+      1,
+      1,
+      0
+    ],
+    [
+      50,
+      718,
+      58,
+      11,
+      1
+    ],
+    [
+      12,
+      106,
+      596,
+      22,
+      0
+    ],
+    [
+      0,
+      2,
+      177,
+      459,
+      29
+    ],
+    [
+      0,
+      0,
+      3,
+      10,
+      454
+    ]
+  ],
+  "baseline_accuracy": 0.553,
+  "baseline_macro_f1": 0.5434128474361335,
+  "baseline_under_triage": 0.41533333333333333,
+  "baseline_over_triage": 0.03166666666666667,
+  "per_class_f1": [
+    0.8592057761732852,
+    0.8587291795188156,
+    0.8160919540229885,
+    0.8567026194144838,
+    0.9490114464099896
+  ],
+  "confusion": [
+    [
+      238,
+      46,
+      6,
+      2,
+      0
+    ],
+    [
+      19,
+      696,
+      110,
+      12,
+      1
+    ],
+    [
+      5,
+      41,
+      639,
+      51,
+      0
+    ],
+    [
+      0,
+      0,
+      74,
+      556,
+      37
+    ],
+    [
+      0,
+      0,
+      1,
+      10,
+      456
+    ]
+  ],
+  "time_mae": 3.994652344947208,
+  "time_mean": 31.634,
+  "time_within_5": 0.708,
+  "importance": {
+    "age": 0.046,
+    "heart_rate": 0.078,
+    "systolic_bp": 0.0982,
+    "resp_rate": 0.0743,
+    "spo2": 0.1311,
+    "temperature": 0.0505,
+    "consciousness": 0.0965,
+    "pain": 0.1772,
+    "complaint_minor": 0.136,
+    "complaint_fever": 0.0187,
+    "complaint_abdominal": 0.0189,
+    "complaint_trauma": 0.0101,
+    "complaint_breathing": 0.0108,
+    "complaint_chest": 0.0382,
+    "complaint_stroke": 0.0155
+  },
+  "time_importance": {
+    "age": 0.02,
+    "heart_rate": 0.0082,
+    "systolic_bp": 0.0091,
+    "resp_rate": 0.0048,
+    "spo2": 0.0051,
+    "temperature": 0.0066,
+    "consciousness": 0.0025,
+    "pain": 0.0036,
+    "complaint_minor": 0.1426,
+    "complaint_fever": 0.1118,
+    "complaint_abdominal": 0.0017,
+    "complaint_trauma": 0.0213,
+    "complaint_breathing": 0.0041,
+    "complaint_chest": 0.0595,
+    "complaint_stroke": 0.0659,
+    "esi": 0.5332
+  },
+  "train_seconds": 0.5498518999993394
+}
