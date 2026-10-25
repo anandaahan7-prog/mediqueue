@@ -51,12 +51,17 @@ const Charts = {
   },
 
   // Grouped vertical bars.
-  bars({ categories, series, width = 680, height = 260, unit = '', decimals = 1 }) {
+  bars({ categories, series, width = 680, height = 260, unit = '', decimals = 1, emptyText = 'No data yet' }) {
+    if (!series.some(s => s.values.some(v => v > 0))) {
+      return `<div class="empty"><strong>${escapeHtml(emptyText)}</strong><p>The chart fills in as patients arrive.</p></div>`;
+    }
     const W = width, H = height;
     const pad = { l: 46, r: 10, t: 16, b: 44 };
     const plotW = W - pad.l - pad.r;
     const plotH = H - pad.t - pad.b;
-    const top = this.niceMax(Math.max(0.0001, ...series.flatMap(s => s.values)) * 1.1);
+    let top = this.niceMax(Math.max(0.0001, ...series.flatMap(s => s.values)) * 1.1);
+    // counts (decimals 0) get whole-number gridlines – no "1.25 patients"
+    if (decimals === 0) top = Math.max(4, Math.ceil(top / 4) * 4);
     const y = v => pad.t + plotH - (v / top) * plotH;
 
     let svg = '';

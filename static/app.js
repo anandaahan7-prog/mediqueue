@@ -14,48 +14,115 @@ const ESI_NAMES = { 1: 'Resuscitation', 2: 'Emergent', 3: 'Urgent', 4: 'Less urg
 const ESI_TARGET = { 1: 0, 2: 10, 3: 30, 4: 60, 5: 120 };
 const esiBadge = (l, name = false) => `<span class="esi-badge esi-${l}">ESI ${l}${name ? ' · ' + ESI_NAMES[l] : ''}</span>`;
 
+// small inline icon set (one stroke style everywhere)
+const ICONS = {
+  up: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+  alert: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>',
+  pause: '<path d="M9 5v14M15 5v14"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>',
+};
+const icon = (name, cls = 'ico') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+const agedTag = (q, short = false) => q.effective < q.esi
+  ? `<span class="aged" title="Waited long enough to move up from ESI ${q.esi}">${icon('up')}${short ? q.effective : `aged to ${q.effective}`}</span>` : '';
+
 async function getJSON(url, options) {
   const res = await fetch(url, options);
   if (!res.ok) throw new Error(res.status);
   return res.json();
 }
 
+// Only touch the DOM when the markup really changed, so a keyboard user's focus
+// is not thrown away by a refresh that changed nothing.
+function setHTML(el, html) {
+  if (el && el.__html !== html) {
+    el.innerHTML = html;
+    el.__html = html;
+  }
+}
+
+// connection state shown in the clock pill
+let online = true;
+function setOnline(ok) {
+  if (ok === online) return;
+  online = ok;
+  const pill = $('#live-pill');
+  if (!pill) return;
+  pill.classList.toggle('offline', !ok);
+  $('#live-status').textContent = ok ? 'Connection restored' : 'Connection lost, retrying';
+  if (!ok) $('#live-clock').textContent = 'Reconnecting…';
+  else tickClock();
+}
+
 function poll(fn, every = 5000) {
-  const run = () => fn().catch(err => console.warn('refresh failed', err));
+  const run = () => fn().then(() => setOnline(true)).catch(err => { console.warn('refresh failed', err); setOnline(false); });
   run();
   return setInterval(run, every);
 }
 
-function postButton(action, label, cls = 'btn btn-sm', confirmText = '') {
-  const onsubmit = confirmText ? ` onsubmit="return confirm('${confirmText}')"` : '';
-  return `<form method="post" action="${action}" class="inline-form"${onsubmit}><button class="${cls}">${label}</button></form>`;
+function postButton(action, label, cls = 'btn btn-sm', { confirm = '', aria = '' } = {}) {
+  const onsubmit = confirm ? ` onsubmit="return confirm('${confirm.replace(/'/g, '&#39;')}')"` : '';
+  const ariaAttr = aria ? ` aria-label="${escapeHtml(aria)}"` : '';
+  return `<form method="post" action="${action}" class="inline-form"${onsubmit}><button type="submit" class="${cls}"${ariaAttr}>${label}</button></form>`;
+}
+
+function tickClock() {
+  const el = $('#live-clock') || $('#board-clock');
+  if (el && online) el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 // ---------------------------------------------------------------- shell
 (function shell() {
-  const tick = () => {
-    const el = $('#live-clock') || $('#board-clock');
-    if (el) el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-  tick();
-  setInterval(tick, 15000);
+  tickClock();
+  setInterval(tickClock, 15000);
 
   $('#theme-btn')?.addEventListener('click', () => {
     const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = next;
     try { localStorage.setItem('mq-theme', next); } catch (e) { /* private mode */ }
   });
-  $('#menu-btn')?.addEventListener('click', () => {
-    $('#sidebar').classList.add('open');
-    $('#sidebar-backdrop').classList.add('show');
+
+  const menu = $('#menu-btn');
+  const setMenu = open => {
+    $('#sidebar')?.classList.toggle('open', open);
+    $('#sidebar-backdrop')?.classList.toggle('show', open);
+    menu?.setAttribute('aria-expanded', String(open));
+    if (open) $('#sidebar a')?.focus();
+  };
+  menu?.addEventListener('click', () => setMenu(true));
+  $('#sidebar-backdrop')?.addEventListener('click', () => setMenu(false));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && $('#sidebar')?.classList.contains('open')) { setMenu(false); menu?.focus(); }
   });
-  $('#sidebar-backdrop')?.addEventListener('click', () => {
-    $('#sidebar').classList.remove('open');
-    $('#sidebar-backdrop').classList.remove('show');
-  });
+
   // flash messages fade out on their own
-  $$('.flash').forEach(el => setTimeout(() => el.classList.add('fade'), 6000));
+  $$('.flash').forEach(el => setTimeout(() => {
+    el.classList.add('fade');
+    setTimeout(() => el.remove(), 450);
+  }, 6000));
+
+  // every POST button shows a loading state and can't be pressed twice
+  document.addEventListener('submit', e => {
+    const form = e.target;
+    if (e.defaultPrevented || (form.method || '').toLowerCase() !== 'post') return;
+    const btn = e.submitter || $('button[type="submit"], button:not([type])', form);
+    if (!btn) return;
+    setTimeout(() => {
+      btn.disabled = true;
+      btn.setAttribute('aria-busy', 'true');
+      if (form.dataset.loadingText) btn.textContent = form.dataset.loadingText;
+      else btn.classList.add('is-loading');
+    }, 0);
+  });
 })();
+
+// ---------------------------------------------------------------- login
+function initLogin() {
+  $$('[data-demo]').forEach(chip => chip.addEventListener('click', () => {
+    $('#username').value = chip.dataset.demo;
+    $('#password').value = 'demo123';
+    $('.login-form button[type="submit"]').focus();
+  }));
+}
 
 // ---------------------------------------------------------------- triage desk
 function initTriage() {
@@ -76,7 +143,9 @@ function initTriage() {
       const [lo, hi] = field.dataset.range.split(',').map(Number);
       const input = $('input, select', field);
       const v = Number(input.value);
-      field.classList.toggle('abnormal', input.value !== '' && (v < lo || v > hi));
+      const bad = input.value !== '' && (v < lo || v > hi);
+      field.classList.toggle('abnormal', bad);
+      input.setAttribute('aria-invalid', String(bad));
     });
     $('#pain-val').textContent = `${form.elements.pain.value}/10`;
   };
@@ -92,30 +161,30 @@ function initTriage() {
   const render = s => {
     latest = s;
     const flags = s.red_flags.length
-      ? `<div class="callout danger" style="margin-bottom:12px"><div><strong>Red flag – ESI 1 regardless of the model</strong><p>${s.red_flags.map(escapeHtml).join(' · ')}</p></div></div>` : '';
+      ? `<div class="callout danger" style="margin-bottom:12px">${icon('alert')}<div><strong>Red flag: ESI 1 whatever the model says</strong><p>${s.red_flags.map(escapeHtml).join(' · ')}</p></div></div>` : '';
     const bumped = s.safety_bumped
-      ? `<p class="muted" style="font-size:12px;margin-top:6px">Model's top choice was ESI ${s.model_esi}; moved one level up because it gave ESI ${s.esi} ≥ 30% probability.</p>` : '';
+      ? `<p class="hint" style="margin-top:6px">The model's first choice was ESI ${s.model_esi}. It gave ESI ${s.esi} at least 30%, so the safety margin moved it one level up.</p>` : '';
     const reasons = s.reasons.length ? s.reasons.map(r => `
         <div class="reason ${r.effect > 0 ? 'up' : 'down'}"><span>${escapeHtml(r.feature)}: <b>${escapeHtml(r.value)}</b></span>
           <span>${r.effect > 0 ? 'raises' : 'lowers'} urgency</span></div>`).join('')
-      : '<p class="muted" style="font-size:12.5px">Vitals are close to normal – nothing in particular pushed the level.</p>';
+      : '<p class="hint">The vitals are close to normal, so nothing in particular pushed the level.</p>';
     const bars = s.probs.map((p, i) => `
-        <div class="prob-row"><span>${esiBadge(i + 1)}</span><div class="prob-track"><span class="bg-esi-${i + 1}" style="width:${p * 100}%"></span></div><b>${pct(p)}</b></div>`).join('');
+        <div class="prob-row"><span>${esiBadge(i + 1)}</span><div class="prob-track" role="img" aria-label="ESI ${i + 1}: ${pct(p)}"><span class="bg-esi-${i + 1}" style="width:${p * 100}%"></span></div><b>${pct(p)}</b></div>`).join('');
 
     $('#ai-result').innerHTML = `
       ${flags}
       <div class="ai-hero">
-        <div class="ai-level bg-esi-${s.esi}">${s.esi}</div>
-        <div><h2>${ESI_NAMES[s.esi]}</h2>
+        <div class="ai-level bg-esi-${s.esi}" aria-hidden="true">${s.esi}</div>
+        <div><h3 style="font-size:19px">ESI ${s.esi} · ${ESI_NAMES[s.esi]}</h3>
           <p class="muted">${pct(s.confidence)} confident · see a doctor ${ESI_TARGET[s.esi] ? 'within ' + ESI_TARGET[s.esi] + ' min' : 'immediately'}</p>${bumped}</div>
       </div>
       <div class="mini-stats">
         <div class="mini-stat"><span>Expected consult</span><b>${s.minutes} min</b></div>
-        <div class="mini-stat"><span>NEWS2</span><b>${s.news2}</b></div>
+        <div class="mini-stat"><span>NEWS2 score</span><b>${s.news2}</b></div>
         <div class="mini-stat"><span>Model's pick</span><b>ESI ${s.model_esi}</b></div>
       </div>
-      <div class="section-title">Why</div>${reasons}
-      <div class="section-title">Probabilities</div>${bars}`;
+      <div class="section-title">Why this level</div>${reasons}
+      <div class="section-title">Probability of each level</div>${bars}`;
 
     if (!form.elements.final_esi.value || !form.dataset.touched) {
       const radio = $(`input[name="final_esi"][value="${s.esi}"]`, form);
@@ -163,27 +232,26 @@ function initTriage() {
 
 async function refreshQueueTable() {
   const s = await getJSON('/api/state');
-  $('#queue-sub').textContent = `· ${s.queue.length} waiting · aging every ${s.aging} min`;
+  setHTML($('#queue-sub'), `${s.queue.length} waiting · low-priority patients move up a level every ${s.aging} min (up to level 3)`);
   if (!s.queue.length) {
-    $('#queue-table').innerHTML = '<div class="empty"><strong>Nobody is waiting</strong></div>';
+    setHTML($('#queue-table'), '<div class="empty"><strong>Nobody is waiting</strong><p>Patients appear here, in calling order, as soon as you issue a token.</p></div>');
     return;
   }
-  $('#queue-table').innerHTML = `<table>
+  setHTML($('#queue-table'), `<table class="stack-table">
     <thead><tr><th>#</th><th>Token</th><th>Patient</th><th>Complaint</th><th>Triage</th><th class="num">Waiting</th>
-      <th class="num">Est. wait</th><th>Notes</th><th></th></tr></thead>
+      <th class="num">Est. wait</th><th>Flags</th><th><span class="sr-only">Actions</span></th></tr></thead>
     <tbody>${s.queue.map(q => `<tr class="${q.over_target ? 'row-warn' : ''}">
-      <td class="muted">${q.position}</td><td><b>${q.token}</b></td>
-      <td>${escapeHtml(q.name)} <span class="muted">${q.age}${q.sex}</span></td>
-      <td>${escapeHtml(q.complaint)}</td>
-      <td>${esiBadge(q.esi)} ${q.effective < q.esi ? `<span class="aged">↑ aged to ${q.effective}</span>` : ''}
-          ${q.overridden ? `<span class="badge info" title="AI suggested ESI ${q.ai_esi}">nurse override</span>` : ''}</td>
-      <td class="num">${q.waited} min</td>
-      <td class="num">${q.eta_range ? `${q.eta_range[0]}–${q.eta_range[1]} min` : '–'}</td>
-      <td>${q.paused ? '<span class="badge warn">paused, resumes first</span> ' : ''}${q.recheck ? '<span class="badge bad">re-check vitals</span>' : ''}
-          ${q.over_target ? '<span class="badge warn">over target</span>' : ''}</td>
-      <td class="row-actions"><a class="btn btn-sm" href="/triage?retriage=${q.id}">Re-triage</a>
-        ${postButton(`/visits/${q.id}/left`, 'Left', 'btn btn-sm btn-ghost', 'Mark this patient as left without being seen?')}</td>
-    </tr>`).join('')}</tbody></table>`;
+      <td class="muted pos-cell" data-label="Position">${q.position}</td><td data-label="Token" class="token-cell"><span><span class="m-pos">#${q.position} · </span><b>${q.token}</b></span></td>
+      <td data-label="Patient">${escapeHtml(q.name)} <span class="muted">${q.age}${q.sex}</span></td>
+      <td data-label="Complaint">${escapeHtml(q.complaint)}</td>
+      <td data-label="Triage"><span class="notes-cell">${esiBadge(q.esi)} ${agedTag(q)}
+          ${q.overridden ? `<span class="badge info" title="The AI suggested ESI ${q.ai_esi}">nurse override</span>` : ''}</span></td>
+      <td class="num" data-label="Waiting">${q.waited} min</td>
+      <td class="num" data-label="Est. wait">${q.eta_range ? `${q.eta_range[0]}–${q.eta_range[1]} min` : '–'}</td>
+      <td data-label="Flags" class="${!q.paused && !q.recheck && !q.over_target ? 'no-flags' : ''}"><span class="notes-cell">${q.paused ? `<span class="badge warn">${icon('pause')}paused, goes first</span>` : ''}${q.recheck ? '<span class="badge bad">re-check vitals</span>' : ''}${q.over_target ? '<span class="badge warn">over target</span>' : ''}${!q.paused && !q.recheck && !q.over_target ? '<span class="muted">–</span>' : ''}</span></td>
+      <td class="no-label"><div class="row-actions"><a class="btn btn-sm" href="/triage?retriage=${q.id}" aria-label="Re-triage ${q.token}">Re-triage</a>
+        ${postButton(`/visits/${q.id}/left`, 'Mark left', 'btn btn-sm btn-ghost', { confirm: `Mark ${q.token} as left without being seen?`, aria: `Mark ${q.token} as left without being seen` })}</div></td>
+    </tr>`).join('')}</tbody></table>`);
 }
 
 // ---------------------------------------------------------------- doctor console
@@ -199,23 +267,24 @@ function initDoctor() {
     const banner = $('#preempt-banner');
     if (critical && s.preempt_doctor === me && patient) {
       banner.classList.remove('hidden');
-      banner.innerHTML = `<div style="flex:1"><strong>Resuscitation case waiting: ${critical.token}</strong>
-        <p>Every doctor is busy and your patient (ESI ${patient.esi}) is the least urgent one being seen. Pause them and attend now?</p></div>
-        ${postButton('/doctor/preempt', 'Pause &amp; attend', 'btn btn-danger')}`;
+      setHTML(banner, `${icon('alert')}<div style="flex:1"><strong>Resuscitation patient waiting: ${critical.token}</strong>
+        <p>Every doctor is busy and your patient (ESI ${patient.esi}) is the least urgent one being seen. Their time so far is kept and they go back to the front of their level.</p></div>
+        ${postButton('/doctor/preempt', `Pause and see ${critical.token}`, 'btn btn-danger')}`);
     } else if (critical && !patient) {
       banner.classList.remove('hidden');
-      banner.innerHTML = `<div style="flex:1"><strong>ESI 1 patient waiting: ${critical.token}</strong><p>You are free – they will be your next patient.</p></div>`;
+      setHTML(banner, `${icon('alert')}<div style="flex:1"><strong>ESI 1 patient waiting: ${critical.token}</strong><p>You are free, so they will be your next patient. Press “Call next patient”.</p></div>`);
     } else {
       banner.classList.add('hidden');
     }
 
+    const card = $('#current-card');
     if (patient) {
       const progress = Math.min(100, (patient.done / patient.predicted_minutes) * 100);
-      $('#current-card').innerHTML = `
-        <div class="card-head"><h3>Current patient</h3><span class="badge teal">${patient.token}</span></div>
+      setHTML(card, `
+        <div class="card-head"><h2>Current patient</h2><span class="badge teal">${patient.token}</span></div>
         <div class="patient-head">
-          <div class="ai-level bg-esi-${patient.esi}">${patient.esi}</div>
-          <div><h2>${escapeHtml(patient.name)}</h2><p class="muted">${patient.age} yrs · ${patient.sex} · ${escapeHtml(patient.complaint_label)}</p></div>
+          <div class="ai-level bg-esi-${patient.esi}" aria-label="ESI ${patient.esi}">${patient.esi}</div>
+          <div><h3 style="font-size:20px">${escapeHtml(patient.name)}</h3><p class="muted">${patient.age} yrs · ${patient.sex} · ${escapeHtml(patient.complaint_label)}</p></div>
         </div>
         <div class="vitals-grid">
           ${[['HR', patient.heart_rate + ' bpm'], ['BP', patient.systolic_bp + ' mmHg'], ['RR', patient.resp_rate + '/min'],
@@ -223,33 +292,36 @@ function initDoctor() {
              ['AVPU', patient.consciousness_label], ['Waited', patient.waited + ' min']]
             .map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}
         </div>
-        ${patient.override_reason ? `<div class="callout info" style="margin-top:12px"><div><strong>Nurse changed AI level ${patient.ai_esi} → ${patient.esi}</strong><p>${escapeHtml(patient.override_reason)}</p></div></div>` : ''}
+        ${patient.override_reason ? `<div class="callout info" style="margin-top:12px">${icon('info')}<div><strong>The nurse changed the AI level from ${patient.ai_esi} to ${patient.esi}</strong><p>${escapeHtml(patient.override_reason)}</p></div></div>` : ''}
         ${patient.notes ? `<p style="margin-top:12px;font-size:13px"><b>Notes:</b> ${escapeHtml(patient.notes)}</p>` : ''}
-        <div class="progress" style="margin-top:14px"><span style="width:${progress}%"></span></div>
-        <div class="doctor-meta"><span>${patient.done} min so far</span><span>AI expected ~${patient.predicted_minutes} min</span></div>
+        <div class="progress" role="progressbar" aria-label="Consultation time" aria-valuemin="0" aria-valuemax="${patient.predicted_minutes}" aria-valuenow="${patient.done}"><span style="width:${progress}%"></span></div>
+        <div class="doctor-meta"><span>${patient.done} min so far</span><span>AI expected about ${patient.predicted_minutes} min</span></div>
         <div class="row" style="margin-top:16px">
           ${postButton('/doctor/discharge', 'Discharge', 'btn btn-primary')}
-          ${postButton('/doctor/admit', `Admit to observation (${s.semaphore} bed${s.semaphore === 1 ? '' : 's'} free)`, 'btn')}
-        </div>`;
+          ${postButton('/doctor/admit', `Admit to observation · ${s.semaphore} bed${s.semaphore === 1 ? '' : 's'} free`, 'btn')}
+        </div>`);
     } else {
-      $('#current-card').innerHTML = `
-        <div class="card-head"><h3>Current patient</h3></div>
-        <div class="empty" style="padding:30px 10px"><strong>You are free</strong>
-          <p style="margin:4px 0 16px">${mine && mine.on_duty ? `${s.queue.length} patient${s.queue.length === 1 ? '' : 's'} waiting.` : 'Start your shift to receive patients.'}</p>
-          ${mine && mine.on_duty ? postButton('/doctor/call-next', 'Call next patient', 'btn btn-primary btn-lg') : ''}
-        </div>`;
+      const onDuty = mine && mine.on_duty;
+      setHTML(card, `
+        <div class="card-head"><h2>Current patient</h2></div>
+        <div class="empty" style="padding:30px 10px"><strong>${onDuty ? 'You are free' : 'You are off duty'}</strong>
+          <p style="margin:4px auto 16px">${onDuty
+            ? (s.queue.length ? `${s.queue.length} patient${s.queue.length === 1 ? ' is' : 's are'} waiting. The dispatcher picks the most urgent one for you.` : 'Nobody is waiting right now.')
+            : 'Start your shift to receive patients.'}</p>
+          ${onDuty && s.queue.length ? postButton('/doctor/call-next', 'Call next patient', 'btn btn-primary btn-lg') : ''}
+        </div>`);
     }
 
-    $('#up-next').innerHTML = s.queue.slice(0, 6).map(q => `
+    setHTML($('#up-next'), s.queue.slice(0, 6).map(q => `
       <div class="queue-item ${q.over_target ? 'breach' : ''}"><span class="queue-pos">#${q.position}</span>
-        <div><div class="queue-name">${q.token} · ${escapeHtml(q.name)} ${esiBadge(q.esi)} ${q.effective < q.esi ? `<span class="aged">↑ ${q.effective}</span>` : ''}</div>
-          <div class="queue-sub">${escapeHtml(q.complaint)} · ~${q.predicted} min consult${q.paused ? ' · paused earlier' : ''}</div></div>
+        <div><div class="queue-name">${q.token} · ${escapeHtml(q.name)} ${esiBadge(q.esi)} ${agedTag(q, true)}</div>
+          <div class="queue-sub">${escapeHtml(q.complaint)} · about ${q.predicted} min${q.paused ? ' · paused earlier' : ''}</div></div>
         <div class="queue-right">${q.waited} min<small>waiting</small></div></div>`).join('')
-      || '<div class="empty">Queue is empty.</div>';
+      || '<div class="empty"><strong>Nobody is waiting</strong><p>New patients appear here as soon as the triage desk issues a token.</p></div>');
 
-    $('#colleagues').innerHTML = s.doctors.filter(d => d.id !== me).map(d => `
-      <div class="colleague"><span class="avatar">${escapeHtml(d.name.replace('Dr. ', '')[0])}</span>
-        <div><b>${escapeHtml(d.name)}</b><small>${d.room} · ${d.on_duty ? (d.current ? `with ${d.current.token} (ESI ${d.current.esi}) for ${d.current.done} min` : 'free') : 'off duty'}</small></div></div>`).join('');
+    setHTML($('#colleagues'), s.doctors.filter(d => d.id !== me).map(d => `
+      <div class="colleague"><span class="avatar" aria-hidden="true">${escapeHtml(d.name.replace('Dr. ', '')[0])}</span>
+        <div><b>${escapeHtml(d.name)}</b><small>${d.room} · ${d.on_duty ? (d.current ? `with ${d.current.token} (ESI ${d.current.esi}) for ${d.current.done} min` : 'free') : 'off duty'}</small></div></div>`).join(''));
 
     renderLog(s.events);
   });
@@ -259,34 +331,36 @@ function renderLog(events) {
   const el = $('#event-log');
   if (!el) return;
   const kindClass = { triaged: 'arrive', called: 'start', discharged: 'finish', paused: 'preempt', retriaged: 'aging', bed: 'finish', boarding: 'info', left: 'preempt' };
-  el.innerHTML = events.map(e => `<div class="log-item ${kindClass[e.kind] || ''}"><span class="log-time">${e.at}</span><span class="log-dot"></span>
-    <span>${e.token ? `<b>${e.token}</b> ` : ''}${escapeHtml(e.detail || e.kind)}${e.who ? ` <span class="muted">– ${escapeHtml(e.who)}</span>` : ''}</span></div>`).join('');
+  setHTML(el, events.map(e => `<div class="log-item ${kindClass[e.kind] || ''}"><span class="log-time">${e.at}</span><span class="log-dot" aria-hidden="true"></span>
+    <span>${e.token ? `<b>${e.token}</b> ` : ''}${escapeHtml(e.detail || e.kind)}${e.who ? ` <span class="muted">· ${escapeHtml(e.who)}</span>` : ''}</span></div>`).join('')
+    || '<div class="empty">No activity yet.</div>');
 }
 
 // ---------------------------------------------------------------- bed board
 function initBeds() {
+  const STATUS = { free: ['Free', 'ok'], occupied: ['Occupied', 'info'], cleaning: ['Cleaning', 'warn'] };
   poll(async () => {
     const s = await getJSON('/api/state');
     const count = st => s.beds.filter(b => b.status === st).length;
-    $('#bed-stats').innerHTML = `
-      <div class="stat good"><div class="label">Semaphore value</div><div class="value">${s.semaphore}<small>free</small></div><div class="foot">beds available right now</div></div>
-      <div class="stat"><div class="label">Occupied</div><div class="value">${count('occupied')}<small>/ ${s.beds.length}</small></div><div class="foot">patients in observation</div></div>
-      <div class="stat"><div class="label">Being cleaned</div><div class="value">${count('cleaning')}</div><div class="foot">signal() when done</div></div>
-      <div class="stat ${s.boarding.length ? 'alert' : ''}"><div class="label">Boarding</div><div class="value">${s.boarding.length}</div><div class="foot">blocked, waiting for a bed</div></div>`;
+    setHTML($('#bed-stats'), `
+      <div class="stat good"><div class="label">Free beds</div><div class="value">${s.semaphore}<small>/ ${s.beds.length}</small></div><div class="foot">the semaphore's value</div></div>
+      <div class="stat"><div class="label">Occupied</div><div class="value">${count('occupied')}</div><div class="foot">patients in observation</div></div>
+      <div class="stat"><div class="label">Being cleaned</div><div class="value">${count('cleaning')}</div><div class="foot">“Mark clean” = signal()</div></div>
+      <div class="stat ${s.boarding.length ? 'alert' : ''}"><div class="label">Boarding</div><div class="value">${s.boarding.length}</div><div class="foot">blocked, waiting for a bed</div></div>`);
 
-    $('#bed-grid').innerHTML = s.beds.map(b => `
+    setHTML($('#bed-grid'), s.beds.map(b => `
       <div class="bed ${b.status}">
-        <div class="bed-top"><b>${b.label}</b><span class="badge ${b.status === 'free' ? 'ok' : b.status === 'cleaning' ? 'warn' : 'info'}">${b.status}</span></div>
-        <div class="bed-body">${b.status === 'occupied' ? `${b.token} · ${escapeHtml(b.name)} ${esiBadge(b.esi)}` : b.status === 'cleaning' ? 'Housekeeping' : 'Ready'}</div>
-        ${b.status === 'occupied' ? postButton(`/beds/${b.id}/release`, 'Release', 'btn btn-sm') : ''}
-        ${b.status === 'cleaning' ? postButton(`/beds/${b.id}/clean`, 'Mark clean', 'btn btn-sm btn-primary') : ''}
-      </div>`).join('');
+        <div class="bed-top"><b>${b.label}</b><span class="badge ${STATUS[b.status][1]}">${STATUS[b.status][0]}</span></div>
+        <div class="bed-body">${b.status === 'occupied' ? `${b.token} · ${escapeHtml(b.name)} ${esiBadge(b.esi)}` : b.status === 'cleaning' ? 'With housekeeping' : 'Ready for the next patient'}</div>
+        ${b.status === 'occupied' ? postButton(`/beds/${b.id}/release`, 'Release bed', 'btn btn-sm', { aria: `Release ${b.label} (${b.token} leaves the ward)` }) : ''}
+        ${b.status === 'cleaning' ? postButton(`/beds/${b.id}/clean`, 'Mark clean', 'btn btn-sm btn-primary', { aria: `Mark ${b.label} as clean` }) : ''}
+      </div>`).join(''));
 
     $('#boarding-count').textContent = s.boarding.length;
-    $('#boarding').innerHTML = s.boarding.map((b, i) => `
+    setHTML($('#boarding'), s.boarding.map((b, i) => `
       <div class="queue-item"><span class="queue-pos">#${i + 1}</span><div><div class="queue-name">${b.token} · ${escapeHtml(b.name)} ${esiBadge(b.esi)}</div></div>
         <div class="queue-right">${b.since} min<small>boarding</small></div></div>`).join('')
-      || '<div class="empty">Nobody is waiting for a bed.</div>';
+      || '<div class="empty"><strong>Nobody is waiting for a bed</strong><p>When a doctor admits a patient and no bed is free, they wait here.</p></div>');
   });
 }
 
@@ -294,13 +368,13 @@ function initBeds() {
 function initBoard() {
   poll(async () => {
     const b = await getJSON('/api/board');
-    $('#calling').innerHTML = b.calling.map(c => `<div class="calling"><b>${c.token}</b><span>${c.room}</span></div>`).join('')
-      || '<p class="board-empty">—</p>';
+    setHTML($('#calling'), b.calling.map(c => `<div class="calling"><b>${c.token}</b><span>${c.room}</span></div>`).join('')
+      || '<p class="board-empty">No one is with a doctor right now.</p>');
     $('#waiting-count').textContent = `(${b.waiting.length})`;
-    $('#waiting').innerHTML = b.waiting.map(w => `
+    setHTML($('#waiting'), b.waiting.map(w => `
       <div class="waiting-tile ${w.urgent ? 'urgent' : ''}"><b>${w.token}</b>
-        <span>${w.urgent ? 'Next' : w.eta_range ? `~${w.eta_range[0]}–${w.eta_range[1]} min` : 'Please wait'}</span></div>`).join('')
-      || '<p class="board-empty">No one waiting</p>';
+        <span>${w.urgent ? 'Next' : w.eta_range ? `about ${w.eta_range[0]}–${w.eta_range[1]} min` : 'Please wait'}</span></div>`).join('')
+      || '<p class="board-empty">Nobody is waiting.</p>');
   }, 5000);
 }
 
@@ -309,14 +383,14 @@ function initAdmin() {
   poll(async () => {
     const s = await getJSON('/api/state');
     const st = s.stats;
-    $('#admin-stats').innerHTML = [
+    setHTML($('#admin-stats'), [
       ['Waiting now', st.waiting, `${st.in_consult} with a doctor`],
       ['Doctors on duty', st.on_duty, 'of 4'],
-      ['Seen today', st.seen_today, `${st.left} left without being seen`],
-      ['Avg wait today', `${st.avg_wait}<small>min</small>`, 'arrival → doctor'],
-      ['ESI 1–2 wait today', `${st.critical_wait}<small>min</small>`, 'target ≤ 10 min'],
+      ['Seen, last 12 h', st.seen_today, `${st.left} left without being seen`],
+      ['Avg wait, 12 h', `${st.avg_wait}<small>min</small>`, 'arrival to doctor'],
+      ['ESI 1–2 wait, 12 h', `${st.critical_wait}<small>min</small>`, 'target 10 min or less'],
       ['Nurse overrides', st.overrides, 'AI suggestion changed'],
-    ].map(([l, v, f]) => `<div class="stat"><div class="label">${l}</div><div class="value">${v}</div><div class="foot">${f}</div></div>`).join('');
+    ].map(([l, v, f]) => `<div class="stat"><div class="label">${l}</div><div class="value">${v}</div><div class="foot">${f}</div></div>`).join(''));
   }, 10000);
 
   getJSON('/api/admin/reports').then(r => {
@@ -325,13 +399,10 @@ function initAdmin() {
       series: [{ name: 'Average wait (min)', color: 'var(--accent)', values: r.by_esi.map(x => x.wait || 0) }],
       width: 520, height: 230,
     });
-    const hours = []; for (let h = 0; h < 24; h++) hours.push(h);
-    const counts = Object.fromEntries(r.hourly.map(x => [x.hour, x.n]));
-    const shown = hours.filter(h => h >= 6 && h <= 23);
     $('#chart-hourly').innerHTML = Charts.bars({
-      categories: shown.map(h => String(h).padStart(2, '0')),
-      series: [{ name: 'Arrivals', color: 'var(--primary)', values: shown.map(h => counts[h] || 0) }],
-      width: 520, height: 230, decimals: 0,
+      categories: r.hourly.map(x => String(x.hour).padStart(2, '0')),
+      series: [{ name: 'Arrivals', color: 'var(--primary)', values: r.hourly.map(x => x.n) }],
+      width: 520, height: 230, decimals: 0, emptyText: 'No arrivals in the last 12 hours',
     });
 
     // AI vs nurse agreement matrix
@@ -339,8 +410,9 @@ function initAdmin() {
     r.agreement.forEach(a => { grid[a.ai_esi - 1][a.esi - 1] += a.n; });
     const total = grid.flat().reduce((a, b) => a + b, 0);
     const agree = grid.reduce((s, row, i) => s + row[i], 0);
-    $('#agreement').innerHTML = `<table class="confusion"><thead><tr><th>AI ↓ / Nurse →</th>${[1, 2, 3, 4, 5].map(l => `<th>ESI ${l}</th>`).join('')}</tr></thead>
-      <tbody>${grid.map((row, i) => `<tr><th>ESI ${i + 1}</th>${row.map((n, j) => `<td class="cell" style="background:${n ? (i === j ? 'rgba(13,148,136,' : 'rgba(225,29,72,') + (0.15 + Math.min(0.7, n / 12)) + ')' : 'transparent'}">${n || ''}</td>`).join('')}</tr>`).join('')}</tbody></table>
+    $('#agreement').innerHTML = `<table class="confusion"><caption class="sr-only">Rows: AI suggestion. Columns: nurse's final level.</caption>
+      <thead><tr><th scope="col">AI ↓ · nurse →</th>${[1, 2, 3, 4, 5].map(l => `<th scope="col">ESI ${l}</th>`).join('')}</tr></thead>
+      <tbody>${grid.map((row, i) => `<tr><th scope="row">ESI ${i + 1}</th>${row.map((n, j) => `<td class="cell" style="background:${n ? (i === j ? 'rgba(13,148,136,' : 'rgba(225,29,72,') + (0.15 + Math.min(0.7, n / 12)) + ')' : 'transparent'}">${n || ''}</td>`).join('')}</tr>`).join('')}</tbody></table>
       <p class="axis-caption">Nurses kept the AI suggestion in ${agree} of ${total} visits (${pct(agree / Math.max(1, total))}).</p>`;
 
     if (r.metrics) {
@@ -354,26 +426,25 @@ function initAdmin() {
 
     if (r.simulation) {
       const pol = Object.values(r.simulation.policies);
-      $('#chart-policies').innerHTML = Charts.bars({
-        categories: pol.map(p => p.label.replace(' (token order)', '').replace(' (triage only)', '').replace(' (ours)', '')),
-        series: [
-          { name: 'ESI 1–2 mean wait', color: 'var(--esi-1)', values: pol.map(p => p.critical_wait) },
-          { name: 'ESI 4–5 95th percentile ÷ 10', color: 'var(--esi-5)', values: pol.map(p => p.low_priority_p95 / 10) },
-        ],
-        width: 520, height: 250,
+      const names = pol.map(p => p.label.replace(' (token order)', '').replace(' (triage only)', '').replace(' (ours)', '').replace('Shortest predicted first', 'SJF'));
+      const colors = pol.map(p => (p.label.includes('ours') ? 'var(--primary)' : 'var(--border-strong)'));
+      const small = (values, decimals = 0) => Charts.bars({
+        categories: names, series: [{ name: '', color: 'var(--primary)', values }], width: 300, height: 220, decimals,
       });
+      $('#chart-critical').innerHTML = small(pol.map(p => p.critical_wait), 1);
+      $('#chart-tail').innerHTML = small(pol.map(p => p.low_priority_p95));
+      // highlight our policy's bar, grey for the baselines
+      ['#chart-critical', '#chart-tail'].forEach(sel => $$(`${sel} rect`).forEach((rect, i) => { rect.style.fill = colors[i]; }));
+
       const sweep = r.simulation.aging_sweep;
-      $('#chart-aging').innerHTML = Charts.bars({
-        categories: sweep.map(x => x.aging ? `${x.aging} min` : 'none'),
-        series: [
-          { name: 'ESI 4–5 95th pct wait (min)', color: 'var(--esi-5)', values: sweep.map(x => x.low_p95) },
-          { name: 'ESI 3 on time (%)', color: 'var(--esi-3)', values: sweep.map(x => x.esi3_target * 100) },
-        ],
-        width: 520, height: 250, decimals: 0,
-      });
+      const cats = sweep.map(x => x.aging ? `${x.aging}` : 'off');
+      $('#chart-aging-tail').innerHTML = Charts.bars({ categories: cats, series: [{ name: '', color: 'var(--esi-5)', values: sweep.map(x => x.low_p95) }], width: 240, height: 200, decimals: 0 });
+      $('#chart-aging-esi3').innerHTML = Charts.bars({ categories: cats, series: [{ name: '', color: 'var(--esi-3)', values: sweep.map(x => x.esi3_target * 100) }], width: 240, height: 200, decimals: 0 });
+      // the interval we actually use stays solid, the others fade back
+      ['#chart-aging-tail', '#chart-aging-esi3'].forEach(sel => $$(`${sel} rect`).forEach((rect, i) => { if (cats[i] !== '30') rect.style.opacity = 0.4; }));
     }
   });
 }
 
 // ---------------------------------------------------------------- router
-({ triage: initTriage, doctor: initDoctor, beds: initBeds, board: initBoard, admin: initAdmin })[document.body.dataset.page]?.();
+({ login: initLogin, triage: initTriage, doctor: initDoctor, beds: initBeds, board: initBoard, admin: initAdmin })[document.body.dataset.page]?.();

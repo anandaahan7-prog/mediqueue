@@ -7,65 +7,73 @@
 <form method="post" id="triage-form"
       action="{{ url_for('retriage', visit_id=r.visit_id) if r else url_for('triage_submit') }}">
   <div class="split">
-    <div class="card">
+    <section class="card" aria-labelledby="form-title">
       <div class="card-head">
-        <h3>{% if r %}New vitals for {{ r.name }}{% else %}New patient{% endif %}</h3>
-        {% if not r %}<button type="button" class="btn btn-sm" id="fill-example">Fill example</button>{% endif %}
+        <h2 id="form-title">{% if r %}New vitals for {{ r.name }}{% else %}New patient{% endif %}</h2>
+        {% if not r %}<button type="button" class="btn btn-sm" id="fill-example">Fill an example patient</button>{% endif %}
       </div>
       {% if not r %}
       <div class="form-grid" style="margin-bottom:16px">
-        <div class="field" style="grid-column: span 2"><label>Full name</label><input name="name" required placeholder="Patient name"></div>
-        <div class="field"><label>Sex</label>
-          <select name="sex"><option value="M">Male</option><option value="F">Female</option><option value="O">Other</option></select></div>
-        <div class="field"><label>Phone (optional)</label><input name="phone" placeholder="for SMS updates"></div>
+        <div class="field span-2"><label for="f-name">Full name</label><input id="f-name" name="name" required autocomplete="off" placeholder="Patient name"></div>
+        <div class="field"><label for="f-sex">Sex</label>
+          <select id="f-sex" name="sex"><option value="M">Male</option><option value="F">Female</option><option value="O">Other</option></select></div>
+        <div class="field"><label for="f-phone">Phone <span class="muted">(optional)</span></label><input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="For SMS updates"></div>
       </div>
       {% endif %}
       <div class="form-grid" id="vitals">
-        <div class="field"><label>Age</label><input name="age" type="number" min="0" max="120" required value="{{ r.age if r else '' }}"></div>
-        <div class="field" data-range="60,100"><label>Heart rate</label><input name="heart_rate" type="number" min="20" max="250" required value="{{ r.heart_rate if r else '' }}"><small>bpm · normal 60–100</small></div>
-        <div class="field" data-range="100,140"><label>Systolic BP</label><input name="systolic_bp" type="number" min="40" max="260" required value="{{ r.systolic_bp if r else '' }}"><small>mmHg · normal 100–140</small></div>
-        <div class="field" data-range="12,20"><label>Resp. rate</label><input name="resp_rate" type="number" min="4" max="60" required value="{{ r.resp_rate if r else '' }}"><small>/min · normal 12–20</small></div>
-        <div class="field" data-range="95,100"><label>SpO₂</label><input name="spo2" type="number" min="50" max="100" required value="{{ r.spo2 if r else '' }}"><small>% · normal ≥ 95</small></div>
-        <div class="field" data-range="36.1,37.9"><label>Temperature</label><input name="temperature" type="number" step="0.1" min="30" max="44" required value="{{ r.temperature if r else '' }}"><small>°C</small></div>
-        <div class="field" data-range="0,3"><label>Pain <span class="muted" id="pain-val"></span></label><input name="pain" type="range" min="0" max="10" value="{{ r.pain if r else 2 }}"><small>0 none – 10 worst</small></div>
-        <div class="field" data-range="0,0"><label>Consciousness (AVPU)</label>
-          <select name="consciousness">{% for c in consciousness_levels %}<option value="{{ loop.index0 }}" {{ 'selected' if r and r.consciousness == loop.index0 }}>{{ c }}</option>{% endfor %}</select></div>
-        <div class="field" style="grid-column: span 2"><label>Chief complaint</label>
-          <select name="complaint">{% for key, label in complaints.items() %}<option value="{{ key }}" {{ 'selected' if r and r.complaint == key }}>{{ label }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="f-age">Age</label><input id="f-age" name="age" type="number" inputmode="numeric" min="0" max="120" required value="{{ r.age if r else '' }}"><small>years</small></div>
+        <div class="field" data-range="60,100"><label for="f-hr">Heart rate</label><input id="f-hr" name="heart_rate" type="number" inputmode="numeric" min="20" max="250" required value="{{ r.heart_rate if r else '' }}" aria-describedby="h-hr"><small id="h-hr">bpm · normal 60–100</small></div>
+        <div class="field" data-range="100,140"><label for="f-bp">Systolic BP</label><input id="f-bp" name="systolic_bp" type="number" inputmode="numeric" min="40" max="260" required value="{{ r.systolic_bp if r else '' }}" aria-describedby="h-bp"><small id="h-bp">mmHg · normal 100–140</small></div>
+        <div class="field" data-range="12,20"><label for="f-rr">Resp. rate</label><input id="f-rr" name="resp_rate" type="number" inputmode="numeric" min="4" max="60" required value="{{ r.resp_rate if r else '' }}" aria-describedby="h-rr"><small id="h-rr">per min · normal 12–20</small></div>
+        <div class="field" data-range="95,100"><label for="f-spo2">SpO₂</label><input id="f-spo2" name="spo2" type="number" inputmode="numeric" min="50" max="100" required value="{{ r.spo2 if r else '' }}" aria-describedby="h-spo2"><small id="h-spo2">% · normal 95 or more</small></div>
+        <div class="field" data-range="36.1,37.9"><label for="f-temp">Temperature</label><input id="f-temp" name="temperature" type="number" inputmode="decimal" step="0.1" min="30" max="44" required value="{{ r.temperature if r else '' }}" aria-describedby="h-temp"><small id="h-temp">°C · normal 36.1–37.9</small></div>
+        <div class="field" data-range="0,3"><label for="f-pain">Pain <span class="muted" id="pain-val"></span></label><input id="f-pain" name="pain" type="range" min="0" max="10" value="{{ r.pain if r else 2 }}" aria-describedby="h-pain"><small id="h-pain">0 none – 10 worst</small></div>
+        <div class="field" data-range="0,0"><label for="f-avpu">Consciousness (AVPU)</label>
+          <select id="f-avpu" name="consciousness">{% for c in consciousness_levels %}<option value="{{ loop.index0 }}" {{ 'selected' if r and r.consciousness == loop.index0 }}>{{ c }}</option>{% endfor %}</select></div>
+        <div class="field span-2"><label for="f-complaint">Chief complaint</label>
+          <select id="f-complaint" name="complaint">{% for key, label in complaints.items() %}<option value="{{ key }}" {{ 'selected' if r and r.complaint == key }}>{{ label }}</option>{% endfor %}</select></div>
       </div>
       {% if not r %}
-      <div class="field" style="margin-top:14px"><label>Notes</label><textarea name="notes" rows="2" style="min-height:60px" placeholder="History, allergies, anything the doctor should know"></textarea></div>
+      <div class="field" style="margin-top:14px"><label for="f-notes">Notes</label><textarea id="f-notes" name="notes" rows="2" placeholder="History, allergies, anything the doctor should know"></textarea></div>
       {% endif %}
-    </div>
+    </section>
 
-    <div class="card ai-card" id="ai-panel">
-      <div class="card-head"><h3>AI triage suggestion</h3><span class="badge info">decision support</span></div>
-      <div id="ai-result"><div class="empty"><strong>Waiting for vitals</strong>The suggestion updates as you type.</div></div>
-      <div class="final-box">
-        <div class="section-title" style="margin-top:4px">Final triage level</div>
+    <section class="card ai-card" id="ai-panel" aria-labelledby="ai-title">
+      <div class="card-head"><h2 id="ai-title">AI triage suggestion</h2><span class="badge info">decision support</span></div>
+      <div id="ai-result" aria-live="polite">
+        <div class="ai-placeholder">
+          <p>The suggestion appears here as soon as the vitals are filled in.</p>
+          <ol><li>Enter age and the six vital signs</li><li>Check the suggested level and the reasons</li><li>Confirm it, or choose another level and say why</li></ol>
+        </div>
+      </div>
+      <fieldset class="final-box">
+        <legend>Final triage level</legend>
         <div class="esi-picker" id="esi-picker">
           {% for l in range(1, 6) %}
           <label class="esi-option esi-{{ l }}"><input type="radio" name="final_esi" value="{{ l }}" {{ 'checked' if r and r.esi == l }}><span>ESI {{ l }}</span></label>
           {% endfor %}
         </div>
         <div class="field hidden" id="override-field" style="margin-top:10px">
-          <label>Why are you changing the AI suggestion?</label>
-          <input name="override_reason" placeholder="e.g. known cardiac history, looks worse than vitals suggest">
+          <label for="f-reason">Why are you changing the AI suggestion?</label>
+          <input id="f-reason" name="override_reason" placeholder="e.g. known cardiac history, looks worse than the vitals suggest">
         </div>
-        <button class="btn btn-primary btn-lg" style="width:100%;justify-content:center;margin-top:14px">
-          {% if r %}Save new vitals{% else %}Issue token &amp; add to queue{% endif %}
+        <button type="submit" class="btn btn-primary btn-lg btn-block" style="margin-top:14px">
+          {% if r %}Save new vitals{% else %}Issue token and add to queue{% endif %}
         </button>
-        {% if r %}<a class="btn btn-ghost" href="{{ url_for('triage') }}" style="width:100%;justify-content:center;margin-top:6px">Cancel</a>{% endif %}
-      </div>
-    </div>
+        {% if r %}<a class="btn btn-ghost btn-block" href="{{ url_for('triage') }}" style="margin-top:6px">Cancel</a>{% endif %}
+      </fieldset>
+    </section>
   </div>
 </form>
 
-<div class="card section-gap">
+<section class="card section-gap" aria-labelledby="queue-title">
   <div class="card-head">
-    <h3>Waiting queue <span class="muted" id="queue-sub"></span></h3>
-    <span class="hint">order = the order doctors will call patients · refreshes every 5 s</span>
+    <div>
+      <h2 id="queue-title">Waiting queue</h2>
+      <p class="hint" id="queue-sub">Loading…</p>
+    </div>
+    <span class="hint">Shown in the order doctors will call patients</span>
   </div>
-  <div class="table-wrap" id="queue-table"></div>
-</div>
+  <div class="table-wrap" id="queue-table"><div class="skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i></div></div>
+</section>
 {% endblock %}

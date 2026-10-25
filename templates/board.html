@@ -2,30 +2,30 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1324">
   <title>Waiting room · MediQueue ED</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
 <body class="board-page" data-page="board">
   <header class="board-head">
-    <div class="row">
-      <div class="logo-mark"><svg viewBox="0 0 24 24"><path d="M9.5 3h5v6.5H21v5h-6.5V21h-5v-6.5H3v-5h6.5z" fill="currentColor"/></svg></div>
+    <div class="row" style="flex-wrap:nowrap">
+      <div class="logo-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9.5 3h5v6.5H21v5h-6.5V21h-5v-6.5H3v-5h6.5z" fill="currentColor"/></svg></div>
       <div><h1>Emergency Department</h1><p>Patients are seen by urgency, not only by arrival time.</p></div>
     </div>
-    <div class="board-clock" id="board-clock">--:--</div>
+    <div class="board-clock" id="board-clock" aria-hidden="true">--:--</div>
   </header>
   <main class="board-main">
-    <section>
-      <h2>Now being seen</h2>
-      <div id="calling" class="calling-grid"></div>
+    <section aria-labelledby="now-title">
+      <h2 id="now-title">Now being seen</h2>
+      <div id="calling" class="calling-grid" aria-live="polite"></div>
     </section>
-    <section>
-      <h2>Waiting <span id="waiting-count"></span></h2>
+    <section aria-labelledby="wait-title">
+      <h2 id="wait-title">Waiting <span id="waiting-count"></span></h2>
       <div id="waiting" class="waiting-grid"></div>
     </section>
   </main>
-  <footer class="board-foot">Estimated times are approximate and can change if a more urgent patient arrives. If you feel worse while waiting, please tell the nurse at the desk immediately.</footer>
+  <footer class="board-foot">Times are estimates and can change if a more urgent patient arrives. If you feel worse while waiting, tell the nurse at the desk straight away.</footer>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

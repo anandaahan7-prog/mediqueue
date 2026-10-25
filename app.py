@@ -108,6 +108,11 @@ def vitals_from(form):
     return v
 
 
+def shift_start(hours=12):
+    """Reports cover the last 12 hours rather than the calendar day, so they still make sense after midnight."""
+    return stamp(now() - timedelta(hours=hours))
+
+
 def round5(x):
     return int(5 * round(x / 5))
 
@@ -184,13 +189,13 @@ def build_state(conn):
         SELECT COUNT(*) AS seen,
                AVG((julianday(first_seen_at) - julianday(arrived_at)) * 1440) AS avg_wait,
                AVG(CASE WHEN esi <= 2 THEN (julianday(first_seen_at) - julianday(arrived_at)) * 1440 END) AS critical_wait,
-               (SELECT COUNT(*) FROM visits WHERE esi <> ai_esi AND date(arrived_at) = :today) AS overrides
-        FROM visits WHERE first_seen_at IS NOT NULL AND date(arrived_at) = :today""", {"today": today_date()}).fetchone()
-    left = conn.execute("SELECT COUNT(*) FROM visits WHERE status = 'left' AND date(arrived_at) = ?",
-                        (today_date(),)).fetchone()[0]
+               (SELECT COUNT(*) FROM visits WHERE esi <> ai_esi AND arrived_at >= :since) AS overrides
+        FROM visits WHERE first_seen_at IS NOT NULL AND arrived_at >= :since""", {"since": shift_start()}).fetchone()
+    left = conn.execute("SELECT COUNT(*) FROM visits WHERE status = 'left' AND arrived_at >= ?",
+                        (shift_start(),)).fetchone()[0]
     events = conn.execute("""SELECT e.at, e.kind, e.detail, v.token, u.name AS who FROM events e
                              LEFT JOIN visits v ON v.visit_id = e.visit_id
-                             LEFT JOIN users u ON u.user_id = e.user_id ORDER BY e.event_id DESC LIMIT 14""").fetchall()
+                             LEFT JOIN users u ON u.user_id = e.user_id ORDER BY e.at DESC, e.event_id DESC LIMIT 14""").fetchall()
 
     return {
         "aging": aging,
@@ -478,12 +483,17 @@ def admin_reports():
     by_esi = conn.execute("""SELECT esi, COUNT(*) AS n,
                                     AVG((julianday(first_seen_at) - julianday(arrived_at)) * 1440) AS wait
                              FROM visits WHERE first_seen_at IS NOT NULL GROUP BY esi ORDER BY esi""").fetchall()
-    hourly = conn.execute("""SELECT CAST(strftime('%H', arrived_at) AS INTEGER) AS hour, COUNT(*) AS n
-                             FROM visits WHERE date(arrived_at) = ? GROUP BY hour""", (today_date(),)).fetchall()
+    hourly = conn.execute("""SELECT strftime('%Y-%m-%d %H', arrived_at) AS slot, COUNT(*) AS n
+                             FROM visits WHERE arrived_at >= ? GROUP BY slot""", (shift_start(),)).fetchall()
+    # 12 one-hour buckets ending with the current hour, so the chart is never empty just after midnight
+    counts = {r["slot"]: r["n"] for r in hourly}
+    current = now().replace(minute=0, second=0, microsecond=0)
+    hours = [current - timedelta(hours=k) for k in range(11, -1, -1)]
+    hourly = [{"hour": h.hour, "n": counts.get(h.strftime("%Y-%m-%d %H"), 0)} for h in hours]
     agreement = conn.execute("SELECT ai_esi, esi, COUNT(*) AS n FROM visits GROUP BY ai_esi, esi").fetchall()
     return jsonify({
         "by_esi": [dict(r) for r in by_esi],
-        "hourly": [dict(r) for r in hourly],
+        "hourly": hourly,
         "agreement": [dict(r) for r in agreement],
         "simulation": _load_json("simulation.json"),
         "metrics": _load_json("metrics.json"),

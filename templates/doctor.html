@@ -1,35 +1,38 @@
 {% extends "base.html" %}
 {% block title %}Doctor console{% endblock %}
 {% block heading %}{{ me.name }} · {{ me.room }}{% endblock %}
-{% block subheading %}Press “Call next patient” when you are free – the dispatcher decides who it is.{% endblock %}
+{% block subheading %}Press “Call next patient” when you are free. The dispatcher decides who it is.{% endblock %}
 {% block content %}
-<div id="preempt-banner" class="callout danger hidden" style="margin-bottom:18px"></div>
+<div id="preempt-banner" class="callout danger hidden" role="alert"></div>
 
 <div class="split">
   <div class="stack">
-    <div class="card" id="current-card"></div>
-    <div class="card">
-      <div class="card-head"><h3>Up next</h3><span class="hint">same order the dispatcher will use</span></div>
-      <div id="up-next" class="queue-list"></div>
-    </div>
+    <section class="card" id="current-card" aria-label="Current patient">
+      <div class="card-head"><h2>Current patient</h2></div>
+      <div class="skeleton" aria-hidden="true"><i style="height:56px"></i><i></i><i></i></div>
+    </section>
+    <section class="card" aria-labelledby="next-title">
+      <div class="card-head"><h2 id="next-title">Up next</h2><span class="hint">Same order the dispatcher will use</span></div>
+      <div id="up-next" class="queue-list"><div class="skeleton" aria-hidden="true"><i style="height:56px"></i><i style="height:56px"></i><i style="height:56px"></i></div></div>
+    </section>
   </div>
   <div class="stack">
-    <div class="card">
-      <div class="card-head"><h3>Shift</h3>
+    <section class="card" aria-labelledby="shift-title">
+      <div class="card-head"><h2 id="shift-title">Shift</h2>
         <form method="post" action="{{ url_for('doctor_duty') }}">
-          <button class="btn btn-sm {{ 'btn-danger-soft' if me.on_duty else 'btn-primary' }}">{{ 'Go off duty' if me.on_duty else 'Start shift' }}</button>
+          <button type="submit" class="btn btn-sm {{ 'btn-danger-soft' if me.on_duty else 'btn-primary' }}">{{ 'End shift' if me.on_duty else 'Start shift' }}</button>
         </form>
       </div>
-      <p class="muted" style="font-size:13px">{% if me.on_duty %}You are on duty and counted in the waiting-time estimates.{% else %}You are off duty – patients are not routed to you.{% endif %}</p>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>Other doctors</h3></div>
+      <p class="hint">{% if me.on_duty %}You are on duty, so patients are routed to you and you count in the waiting-time estimates.{% else %}You are off duty. Start your shift to receive patients.{% endif %}</p>
+    </section>
+    <section class="card" aria-labelledby="col-title">
+      <div class="card-head"><h2 id="col-title">Other doctors</h2></div>
       <div id="colleagues" class="stack" style="gap:8px"></div>
-    </div>
-    <div class="card">
-      <div class="card-head"><h3>Department log</h3></div>
+    </section>
+    <section class="card" aria-labelledby="log-title">
+      <div class="card-head"><h2 id="log-title">Department log</h2><span class="hint">Newest first</span></div>
       <div class="log" id="event-log"></div>
-    </div>
+    </section>
   </div>
 </div>
 {% endblock %}
