@@ -70,13 +70,13 @@ npx vercel deploy --prod
 
 ## Suggested demo (8–10 minutes)
 
-1. **Triage desk** (log in as `priya`): click *Fill example*, show the AI suggestion, the reasons and the
-   red outlines on abnormal vitals. Change the level to show that an override needs a reason. Issue the token.
+1. **Triage desk** (log in as `priya`): click *Fill an example patient*, show the AI suggestion, the reasons and the
+   red outlines on abnormal vitals. Change the level to show that an override needs a reason. Click *Issue token and add to queue*.
 2. **Queue** below the form: point out the ESI 5 patient who has *aged to 3* and the re-check reminders.
 3. **Doctor console** (log in as `iyer` in a second browser or incognito window): *Call next patient*.
 4. **Preemption**: as the nurse, triage a patient with SpO₂ 82 and “responds to pain” → red flag, ESI 1.
-   The doctor treating the least urgent patient gets the red *Pause & attend* banner.
-5. **Beds**: admit a patient from the doctor console, then on the bed board release a bed and *Mark clean* –
+   The doctor treating the least urgent patient gets the red *Pause and see T0xx* banner.
+5. **Beds**: click *Admit to observation* on the doctor console, then on the bed board click *Release bed* and then *Mark clean* –
    the semaphore value and boarding queue update.
 6. **Waiting-room display** (`/board`): tokens and estimated ranges, no names.
 7. **Reports** (log in as `admin`): scheduler comparison, aging sweep, model accuracy, and *Run test again*
