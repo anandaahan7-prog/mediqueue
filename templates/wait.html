@@ -20,15 +20,85 @@
     <section class="panel wait-card" id="wait-card" aria-live="polite">
       <div class="skeleton" aria-hidden="true"><i style="height:90px"></i><i></i><i></i></div>
     </section>
+
+    <section class="panel hidden" id="wait-actions" aria-labelledby="actions-title">
+      <h2 id="actions-title" class="wait-h2">While you wait</h2>
+      <div class="act-list">
+        <div class="act">
+          <button type="button" class="act-btn worse" aria-expanded="false" aria-controls="worse-form">
+            <span class="act-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg></span>
+            <span><b>I feel worse</b><small id="worse-sub">Tell the nurse what has changed</small></span>
+            <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          <form class="act-body" id="worse-form" hidden>
+            <fieldset class="check-grid"><legend>What has changed? Pick all that apply.</legend>
+              {% for key, label in symptoms.items() %}
+              <label class="check-chip"><input type="checkbox" name="symptom" value="{{ key }}"> {{ label }}</label>
+              {% endfor %}
+            </fieldset>
+            <p class="act-note">If you cannot breathe, have crushing chest pain or are about to faint, go to the desk or call for help now.</p>
+            <button type="submit" class="btn btn-danger btn-lg btn-block">Tell the nurse</button>
+          </form>
+        </div>
+
+        <div class="act">
+          <button type="button" class="act-btn" id="away-toggle" aria-expanded="false" aria-controls="away-form">
+            <span class="act-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/></svg></span>
+            <span><b>Step away for a few minutes</b><small id="away-sub">Keep your place while you go to the pharmacy, canteen or toilet</small></span>
+            <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          <form class="act-body" id="away-form" hidden>
+            <fieldset class="check-grid"><legend>For how long?</legend>
+              {% for m in away_minutes %}
+              <label class="check-chip choice-chip"><input type="radio" name="minutes" value="{{ m }}" {% if loop.first %}checked{% endif %}> {{ m }} minutes</label>
+              {% endfor %}
+            </fieldset>
+            <p class="act-note">Doctors skip your token while you are away. You keep your place and your waiting time, and you are back in the queue by yourself when the time is up.</p>
+            <button type="submit" class="btn btn-primary btn-lg btn-block">Step away</button>
+          </form>
+        </div>
+
+        <div class="act">
+          <button type="button" class="act-btn" id="alerts-btn" aria-pressed="false">
+            <span class="act-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg></span>
+            <span><b>Sound and vibration</b><small id="alerts-sub">Your phone beeps and buzzes when you are called</small></span>
+            <span class="switch" aria-hidden="true"></span></button>
+        </div>
+
+        <div class="act">
+          <button type="button" class="act-btn quiet" aria-expanded="false" aria-controls="leave-form">
+            <span class="act-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H8"/></svg></span>
+            <span><b>I'm leaving</b><small>Let the hospital know you are going</small></span>
+            <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          <form class="act-body" id="leave-form" hidden>
+            <p class="act-note">Leave the queue? You lose your place, and you will need a new token if you come back. If you feel worse, tell the nurse instead.</p>
+            <div class="act-pair">
+              <button type="submit" class="btn btn-destructive btn-lg">Yes, I'm leaving</button>
+              <button type="button" class="btn btn-lg" data-close>Stay in the queue</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
     <section class="panel hidden" id="wait-why-panel" aria-labelledby="why-title">
       <h2 id="why-title" class="wait-h2">Why you are waiting</h2>
       <ul class="why" id="why"></ul>
     </section>
-    <p class="wait-foot">This page updates by itself. If you feel worse while waiting, tell the nurse at the desk straight away.</p>
+    <p class="wait-foot">This page updates by itself. Keep it open: it shows you when it is your turn.<br>
+      <a href="{{ url_for('patient_login') }}">Not your token? Find your visit</a></p>
+
+    <div class="called" id="called" role="alertdialog" aria-modal="true" aria-labelledby="called-title" aria-describedby="called-text" hidden>
+      <div class="called-sign">
+        <p class="called-token" id="called-token"></p>
+        <h1 id="called-title"><span>Please go to</span> <b id="called-room"></b></h1>
+        <p id="called-text">A doctor is ready to see you now.</p>
+        <button type="button" class="btn btn-lg btn-block" id="called-ok">I'm on my way</button>
+      </div>
+    </div>
     {% else %}
     <section class="panel wait-card">
       <h1 class="wait-h1">Token not found</h1>
       <p class="muted">This link is not valid any more. Please ask the nurse at the desk for your token.</p>
+      <p style="margin-top:12px"><a href="{{ url_for('patient_login') }}">Find your visit with your token and phone number</a></p>
     </section>
     {% endif %}
   </main>

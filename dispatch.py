@@ -10,10 +10,14 @@ We protect it with SQLite's write lock. BEGIN IMMEDIATE acquires the lock before
 the queue (that's our wait()/P on a binary semaphore) and COMMIT releases it (signal()/V).
 The UPDATE also re-checks `status = 'waiting'`, so even a bug elsewhere cannot assign a
 patient twice - the second update would simply change 0 rows.
+
+A patient who stepped away (from their own page) is like a process in the blocked state:
+still in the queue, keeping their place and their waiting time, but never dispatched until
+they press "I'm back" or their time away runs out (a sleep with a timeout).
 """
 
 from db import log_event, minutes_between, now, parse, setting, stamp
-from scheduler import AGING_MINUTES, pick_before, pick_next, preemption_target, reserve_doctor
+from scheduler import AGING_MINUTES, pick_before, pick_next, preemption_target, queue_key, reserve_doctor
 
 
 def queue_policy(conn):
@@ -34,6 +38,11 @@ def as_job(row):
         "predicted": row["predicted_minutes"],
         "consult_done": done,
     }
+
+
+def is_away(row, at=None):
+    """Stepped away and not back yet."""
+    return bool(row["away_until"]) and row["away_until"] > (at or stamp())
 
 
 def now_minutes():
@@ -107,14 +116,18 @@ def _assign(conn, visit_id, doctor_id, user_id, note=""):
     log_event(conn, "called", note or "called by doctor", visit_id, user_id)
 
 
-def call_next(conn, doctor_id):
+def call_next(conn, doctor_id, skipped=None):
+    """Assign the next patient to this doctor. If `skipped` is a list, the tokens of patients who would
+    have come first but have stepped away are added to it."""
     aging = setting(conn, "aging_minutes", AGING_MINUTES)
     policy = queue_policy(conn)
     conn.execute("BEGIN IMMEDIATE")  # ---- enter critical section ----
     try:
         if _current_patient(conn, doctor_id):
             raise DispatchError("Finish or pause your current patient first.")
-        rows = conn.execute("SELECT * FROM visits WHERE status = 'waiting'").fetchall()
+        everyone = conn.execute("SELECT * FROM visits WHERE status = 'waiting'").fetchall()
+        rows = [r for r in everyone if not is_away(r)]  # blocked processes are not dispatched
+        away = [r for r in everyone if is_away(r)]
         jobs = [as_job(r) for r in rows]
         mine = [r for r in rows if r["reserved_for"] == doctor_id and r["ambulance"]]
         alert = held_alert(conn, doctor_id)
@@ -132,9 +145,19 @@ def call_next(conn, doctor_id):
             note = f"fits before ambulance {alert['code']} arrives"
         else:
             nxt = pick_next(jobs, now_minutes(), policy, aging)
+        if skipped is not None and away:
+            t = now_minutes()
+            if nxt is None:
+                passed = away
+            else:
+                mine_key = queue_key(next(j for j in jobs if j["id"] == nxt["id"]), t, policy, aging)
+                passed = [r for r in away if queue_key(as_job(r), t, policy, aging) < mine_key]
+            skipped.extend(r["token"] for r in sorted(passed, key=lambda r: queue_key(as_job(r), t, policy, aging)))
         if nxt is None:
             conn.execute("COMMIT")
             return None
+        if skipped:
+            note = (note + "; " if note else "") + f"skipped {', '.join(skipped)} (stepped away)"
         _assign(conn, nxt["id"], doctor_id, doctor_id, note)
         conn.execute("COMMIT")  # ---- leave critical section ----
         return nxt["id"]

@@ -22,6 +22,8 @@ const ICONS = {
   pause: '<path d="M9 5v14M15 5v14"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
+  away: '<path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/>',
+  bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   ambulance: '<path d="M2.5 6.5h11v10h-11zM13.5 10h4.2l3.3 3.4v3.1h-7.5"/><circle cx="6.5" cy="17.5" r="1.9"/><circle cx="17" cy="17.5" r="1.9"/><path d="M8 8.8v4.4M5.8 11h4.4"/>',
 };
 const icon = (name, cls = 'ico') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -34,6 +36,9 @@ const agedTag = q => q.effective < q.esi
 const riskTag = q => q.high_risk
   ? `<span class="tag risk" title="The AI gives a ${pct(q.risk)} chance this is really an emergency (ESI 1–2), so they move up every ${q.aging_every} min and can reach level 2">risk ${pct(q.risk)}</span>` : '';
 const ambulanceTag = q => (q.ambulance ? `<span class="tag amb">${icon('ambulance')}ambulance</span>` : '');
+// from the patient's own page: stepped away (skipped by "Call next") or pressed "I feel worse"
+const awayTag = q => (q.away ? `<span class="tag info" title="Stepped away from their own page; Call next skips them until then">${icon('away')}away till ${q.away_until}</span>` : '');
+const worseTag = q => (q.worse ? `<span class="tag bad">${icon('alert')}feels worse</span>` : '');
 const etaWords = m => (m > 0 ? `in ${m} min` : m === 0 ? 'due now' : `${-m} min late`);
 
 // every override carries its signed delta against the AI
@@ -125,10 +130,12 @@ function setOnline(ok) {
 // Every live screen refreshes itself. A refresh never overlaps the previous one, pauses while the
 // tab is hidden, and runs at once when the tab comes back or after the user presses a button.
 const refreshers = [];
-function poll(fn, every = 2500) {
+function poll(fn, every = 2500, hiddenEvery = 0) {
   let running = null;
+  let lastRun = 0;
   const run = () => {
     if (!running) {
+      lastRun = Date.now();
       running = fn().then(() => setOnline(true))
         .catch(err => { console.warn('refresh failed', err); setOnline(false); })
         .finally(() => { running = null; });
@@ -137,7 +144,10 @@ function poll(fn, every = 2500) {
   };
   refreshers.push(run);
   run();
-  return setInterval(() => { if (!document.hidden) run(); }, every);
+  // hiddenEvery: keep listening, more slowly, in a background tab (the patient's page waits for its call)
+  return setInterval(() => {
+    if (!document.hidden || (hiddenEvery && Date.now() - lastRun >= hiddenEvery)) run();
+  }, every);
 }
 const refreshNow = () => Promise.all(refreshers.map(run => run()));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshNow(); });
@@ -145,7 +155,7 @@ window.addEventListener('focus', () => refreshNow());
 
 // short confirmation after an action, in the same place and style as a server flash message
 function toast(message, category = 'success') {
-  const host = $('.pages');
+  const host = $('.pages') || $('.wait-main');
   if (!host || !message) return;
   $$('.flash.toast', host).forEach(el => el.remove());
   const el = document.createElement('div');
@@ -206,6 +216,8 @@ function tickClock() {
 // live counts in the navigation: patients waiting, and the bed semaphore's value
 function updateNav(s) {
   $$('#nav-waiting').forEach(el => { el.textContent = s.queue.length; });
+  const help = $('#nav-help');
+  if (help) help.textContent = s.help.length || '';
   const amb = $('#nav-incoming');
   if (amb) amb.textContent = s.incoming.length || '';
   const beds = $('#nav-beds');
@@ -312,6 +324,15 @@ function initLogin() {
     $('#username').value = chip.dataset.demo;
     $('#password').value = 'demo123';
     $('.login-form button[type="submit"]').focus();
+  }));
+}
+
+// ---------------------------------------------------------------- patient sign-in
+function initPatient() {
+  $$('.demo-patients [data-token]').forEach(chip => chip.addEventListener('click', () => {
+    $('#p-token').value = chip.dataset.token;
+    $('#p-phone').value = chip.dataset.phone;
+    $('#find-form button[type="submit"]').focus();
   }));
 }
 
@@ -461,6 +482,26 @@ function renderIncoming(s) {
     </div>`).join('') || '<div class="empty"><strong>No ambulances on the way</strong><p>When a crew calls ahead, enter their vitals below and send a pre-alert.</p></div>');
 }
 
+// patients who pressed "I feel worse" on their own page; red flags first, then the longest waiting
+let helpSeen = null;
+function renderHelp(s) {
+  const list = $('#help');
+  if (!list) return;
+  $('#help-panel').classList.toggle('hidden', !s.help.length);
+  setHTML(list, s.help.map(h => `
+    <div class="list-item help-item ${h.red_flag ? 'is-red' : ''}" data-id="${h.id}"><span class="pos help-ico">${icon('alert')}</span>
+      <div><div class="line1"><span class="token">${h.token}</span>${esiBadge(h.esi)}<span>${escapeHtml(h.name)}</span>${h.red_flag ? '<span class="tag bad">red flag</span>' : ''}</div>
+        <div class="line2"><b>${h.symptoms.map(escapeHtml).join(' · ')}</b> · ${h.ago < 1 ? 'just now' : `${h.ago} min ago`}</div></div>
+      <div class="right"><div class="row-actions"><a class="btn btn-sm btn-primary" href="/triage?retriage=${h.visit_id}" aria-label="Re-triage ${h.token}">Re-triage</a><span class="gap" aria-hidden="true"></span>
+        ${postButton(`/patient-reports/${h.id}/checked`, 'Checked, no change', 'btn btn-sm', { aria: `Checked ${h.token}: no change in urgency` })}</div></div>
+    </div>`).join(''));
+  // a new report drops in once; reports already on screen when the page opened do not
+  $$('.help-item', list).forEach(el => {
+    if (helpSeen && !helpSeen.has(el.dataset.id)) replay(el, 'fresh');
+  });
+  helpSeen = new Set(s.help.map(h => String(h.id)));
+}
+
 // rows that moved up since the last refresh (aging, a re-triage) glow brass for a moment
 const lastPositions = new Map();
 function flagMovedRows(rows) {
@@ -480,6 +521,7 @@ async function refreshQueueTable() {
   updateNav(s);
   renderDoors($('#doors'), s.doctors);
   renderIncoming(s);
+  renderHelp(s);
   setHTML($('#queue-sub'), s.aging_mode === 'adaptive'
     ? `${s.queue.length} waiting · risk-adaptive aging: every ${s.aging} min or sooner for patients the AI thinks may be an emergency`
     : `${s.queue.length} waiting · fixed aging: ESI 3–5 move up a level every ${s.aging} min, up to level 3`);
@@ -492,7 +534,7 @@ async function refreshQueueTable() {
     <thead><tr><th>#</th><th>Token</th><th>Level</th><th>Patient</th><th>Waited · target</th>
       <th class="num">Est. wait</th><th>Flags</th><th><span class="sr-only">Actions</span></th></tr></thead>
     <tbody>${s.queue.map(q => {
-      const flags = `${q.paused ? `<span class="tag warn">${icon('pause')}paused, goes first</span>` : ''}${q.recheck ? '<span class="tag bad">re-check vitals</span>' : ''}${q.over_target ? '<span class="tag warn">over target</span>' : ''}`;
+      const flags = `${worseTag(q)}${awayTag(q)}${q.paused ? `<span class="tag warn">${icon('pause')}paused, goes first</span>` : ''}${q.recheck ? '<span class="tag bad">re-check vitals</span>' : ''}${q.over_target ? '<span class="tag warn">over target</span>' : ''}`;
       return `<tr data-token="${q.token}" data-pos="${q.position}" class="${q.over_target ? 'is-late' : ''}">
       <td class="c-pos">${q.position}</td>
       <td class="c-token"><span class="token">${q.token}</span></td>
@@ -602,7 +644,7 @@ function initDoctor() {
     const scale = waitScale(s.queue.slice(0, 6).map(q => Math.max(q.waited, ESI_TARGET[q.esi])));
     renderSliding($('#up-next'), s.queue.slice(0, 6).map(q => `
       <div class="list-item ${q.over_target ? 'is-late' : ''}" data-token="${q.token}"><span class="pos">#${q.position}</span>
-        <div><div class="line1"><span class="token">${q.token}</span>${esiBadge(q.esi)}${agedTag(q)}<span>${escapeHtml(q.name)}</span></div>
+        <div><div class="line1"><span class="token">${q.token}</span>${esiBadge(q.esi)}${agedTag(q)}${worseTag(q)}${awayTag(q)}<span>${escapeHtml(q.name)}</span></div>
           <div class="line2">${escapeHtml(q.complaint)} · about ${q.predicted} min${q.paused ? ' · paused earlier' : ''}</div>
           ${waitBar(q.waited, ESI_TARGET[q.esi], scale, q.over_target)}</div>
         <div class="right">${q.waited} min<small>waiting</small></div></div>`).join('')
@@ -617,6 +659,7 @@ function initDoctor() {
 const STAMPS = {
   triaged: ['Triaged', 'green'], called: ['Called', ''], discharged: ['Discharged', 'green'], paused: ['Paused', 'amber'],
   retriaged: ['Re-triaged', 'blue'], bed: ['Bed', 'blue'], boarding: ['Boarding', 'amber'], left: ['Left', 'red'],
+  worse: ['Feels worse', 'red'], checked: ['Checked', 'green'], away: ['Stepped away', 'amber'], back: ['Back', 'blue'],
 };
 function renderLog(events) {
   const el = $('#event-log');
@@ -677,43 +720,232 @@ function initBoard() {
     setHTML(strip, b.incoming.map(a => `<p>${icon('ambulance')}<span>Ambulance arriving ${a.eta_min > 0 ? `in about ${a.eta_min} min` : 'now'}${a.room ? ` · ${escapeHtml(a.room)} is being kept free for it` : ''}</span></p>`).join(''));
     $('#waiting-count').textContent = `(${b.waiting.length})`;
     setHTML($('#waiting'), b.waiting.map(w => `
-      <div class="waiting-tile ${w.urgent ? 'urgent' : ''}"><b>${w.token}</b>
-        <span>${w.urgent ? 'Next' : w.eta_range ? `about ${w.eta_range[0]}–${w.eta_range[1]} min` : 'Please wait'}</span></div>`).join('')
+      <div class="waiting-tile ${w.urgent ? 'urgent' : ''}${w.away ? ' away' : ''}"><b>${w.token}</b>
+        <span>${w.away ? 'Stepped away' : w.urgent ? 'Next' : w.eta_range ? `about ${w.eta_range[0]}–${w.eta_range[1]} min` : 'Please wait'}</span></div>`).join('')
       || '<p class="board-empty">Nobody is waiting.</p>');
   }, 4000);
 }
 
 // ---------------------------------------------------------------- the patient's own page
 const ordinal = n => `${n}${['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
+
+// A short tone made in the browser, no sound file. Browsers only allow sound after a tap,
+// which is what the "Sound and vibration" switch is for. Vibration works on most Android phones.
+let audio = null;
+function beep(times = 1) {
+  if (!audio) return;
+  const start = audio.currentTime + 0.05;
+  for (let i = 0; i < times; i++) {
+    const t = start + i * 0.45;
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + 0.32);
+  }
+}
+const buzz = pattern => { try { navigator.vibrate?.(pattern); } catch (err) { /* not supported */ } };
+const remember = {
+  get: key => { try { return localStorage.getItem(key); } catch (err) { return null; } },
+  set: (key, value) => { try { localStorage.setItem(key, value); } catch (err) { /* private mode */ } },
+};
+
 function initWait() {
   const code = document.body.dataset.code;
   if (!code) return;
+  const api = `/api/wait/${encodeURIComponent(code)}`;
+  const baseTitle = document.title;
   const DONE = {
     discharged: ['Your visit is complete', 'Take care. If you were given medicines or advice, follow it, and come back if you feel worse.'],
     admitted: ['You have been admitted', 'You are in an observation bed. The ward team will look after you from here.'],
     boarding: ['You are being admitted', 'The doctor has admitted you. You are waiting for an observation bed to be free.'],
     left: ['This token is closed', 'If you still need care, please speak to the nurse at the desk.'],
   };
+  const panel = $('#wait-actions');
+  let alertsOn = false;
+  let nearlyNoted = false;
+
+  // the actions open one at a time, like an accordion
+  const toggles = $$('[aria-controls]', panel);
+  const closeAll = (except = null) => toggles.forEach(btn => {
+    if (btn === except) return;
+    btn.setAttribute('aria-expanded', 'false');
+    $(`#${btn.getAttribute('aria-controls')}`).hidden = true;
+  });
+  toggles.forEach(btn => btn.addEventListener('click', () => {
+    const open = btn.getAttribute('aria-expanded') !== 'true';
+    closeAll(btn);
+    btn.setAttribute('aria-expanded', String(open));
+    const body = $(`#${btn.getAttribute('aria-controls')}`);
+    body.hidden = !open;
+    if (open) body.scrollIntoView({ block: 'nearest', behavior: reduceMotion() ? 'auto' : 'smooth' });
+  }));
+  $$('[data-close]', panel).forEach(btn => btn.addEventListener('click', () => closeAll()));
+
+  async function act(action, body, btn) {
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('is-loading');
+      btn.setAttribute('aria-busy', 'true');
+    }
+    try {
+      const res = await fetch(`${api}/${action}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const answer = await res.json();
+      toast(answer.message, answer.category);
+      await refreshNow();
+      if (res.ok) {
+        closeAll();
+        window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });  // the card shows what changed
+      }
+      return res.ok;
+    } catch (err) {
+      toast('Could not reach the hospital system. Check your connection and try again, or ask the nurse at the desk.', 'error');
+      return false;
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('is-loading');
+        btn.removeAttribute('aria-busy');
+      }
+    }
+  }
+  $('#worse-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const symptoms = $$('input[name="symptom"]:checked', e.target).map(input => input.value);
+    if (await act('worse', { symptoms }, e.submitter)) e.target.reset();
+  });
+  $('#away-form').addEventListener('submit', e => {
+    e.preventDefault();
+    act('away', { minutes: Number(new FormData(e.target).get('minutes')) }, e.submitter);
+  });
+  $('#leave-form').addEventListener('submit', e => {
+    e.preventDefault();
+    act('leave', {}, e.submitter);
+  });
+  $('#wait-card').addEventListener('click', e => {
+    const back = e.target.closest('[data-back]');
+    if (back) act('back', {}, back);
+  });
+
+  const alertsBtn = $('#alerts-btn');
+  alertsBtn.addEventListener('click', () => {
+    alertsOn = !alertsOn;
+    alertsBtn.setAttribute('aria-pressed', String(alertsOn));
+    $('#alerts-sub').textContent = alertsOn ? 'On: a beep and a buzz when you are called. Keep this page open.'
+      : 'Your phone beeps and buzzes when you are called';
+    if (!alertsOn) return;
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      audio.resume();
+    } catch (err) {
+      audio = null;
+    }
+    beep(1);
+    buzz(120);
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+  });
+
+  // "Please go to Room 3" fills the screen once per call, until the patient confirms
+  const overlay = $('#called');
+  const okBtn = $('#called-ok');
+  let openKey = null;
+  const closeCalled = () => {
+    if (openKey) remember.set(openKey, '1');
+    openKey = null;
+    overlay.hidden = true;
+    document.title = baseTitle;
+  };
+  okBtn.addEventListener('click', closeCalled);
+  overlay.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeCalled();
+    if (e.key === 'Tab') { e.preventDefault(); okBtn.focus(); }  // the one control keeps the focus
+  });
+  function showCalled(w) {
+    const key = `mq-called:${code}:${w.called_at}`;
+    if (openKey === key || remember.get(key)) return;
+    openKey = key;
+    $('#called-token').textContent = `Token ${w.token}`;
+    $('#called-room').textContent = w.room || 'the consultation room';
+    overlay.hidden = false;
+    replay(overlay, 'enter');
+    okBtn.focus();
+    document.title = `Go to ${w.room || 'your room'} · ${baseTitle}`;
+    buzz([300, 150, 300, 150, 600]);
+    if (alertsOn) beep(3);
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(`Please go to ${w.room}`, { body: `Token ${w.token}: a doctor is ready to see you now.`, tag: 'mediqueue-called' });
+      } catch (err) { /* phones need a service worker for this; the page itself still shows the call */ }
+    }
+  }
+
   poll(async () => {
-    const w = await getJSON(`/api/wait/${encodeURIComponent(code)}`);
+    const w = await getJSON(api);
     const card = $('#wait-card');
     const why = $('#wait-why-panel');
+    panel.classList.toggle('hidden', w.status !== 'waiting');
     if (w.status === 'waiting') {
-      const aging = w.next_step_in ? `<p class="wait-aging">${icon('up')}Your priority goes up in about ${w.next_step_in} min (every ${w.aging_every} min while you wait).</p>` : '';
+      const away = w.away;
+      const r = w.report && w.report.status !== 'closed' ? w.report : null;
+      let note = '';
+      if (away) {
+        note = `<div class="wait-note away">${icon('away')}<div><strong>Back by ${away.until} · ${away.left} min left</strong>
+          <p>You keep your place and your waiting time. Doctors skip your token until you are back.</p>
+          <button type="button" class="btn btn-primary btn-lg btn-block" data-back>I'm back</button></div></div>`;
+      } else if (w.position <= 2) {
+        note = `<div class="wait-note next">${icon('bell')}<div><strong>${w.position === 1 ? 'You are next' : 'Nearly your turn'}</strong>
+          <p>${w.position === 1 ? 'Please stay close to the waiting area: your token will be called soon.' : 'One person is ahead of you. Please stay close to the waiting area.'}</p></div></div>`;
+      }
+      const report = !r ? '' : `<div class="wait-note report ${r.status}">${icon(r.status === 'open' ? 'info' : 'check')}<div><strong>${
+        r.status === 'open' ? `The nurse was told at ${r.at}` : r.status === 'retriaged' ? `A nurse reassessed you at ${r.handled_at}` : `A nurse checked on you at ${r.handled_at}`}</strong>
+        ${r.status === 'open' ? '<p>Stay where you are: someone will come to check on you. If it gets much worse, go to the desk straight away.</p>' : ''}</div></div>`;
+      const aging = w.next_step_in && !away
+        ? `<p class="wait-aging">${icon('up')}Your priority goes up in about ${w.next_step_in} min (every ${w.aging_every} min while you wait).</p>` : '';
       setHTML(card, `<p class="wait-token"><span class="token lg">${w.token}</span><span class="muted">arrived ${w.arrived}</span></p>
-        <h1 class="wait-h1">You are <b>${ordinal(w.position)}</b> in the queue</h1>
-        <p class="wait-eta">${w.eta_range ? `Expected wait about <b>${w.eta_range[0]}–${w.eta_range[1]} min</b>` : 'A doctor will call your token'} · waiting ${w.waited} min</p>${aging}`);
+        <h1 class="wait-h1">${away ? 'You have <b>stepped away</b>' : `You are <b>${ordinal(w.position)}</b> in the queue`}</h1>
+        <p class="wait-eta">${away ? `Your place: ${ordinal(w.position)} of ${w.waiting}`
+          : w.eta_range ? `Expected wait about <b>${w.eta_range[0]}–${w.eta_range[1]} min</b>` : 'A doctor will call your token'} · waiting ${w.waited} min</p>
+        ${note}${report}${aging}`);
+
+      const step = w.step_away;
+      const awayBtn = $('#away-toggle');
+      awayBtn.disabled = Boolean(away) || !step.ok;
+      if (awayBtn.disabled && awayBtn.getAttribute('aria-expanded') === 'true') closeAll();
+      $('#away-sub').textContent = away ? `You are away until ${away.until}`
+        : step.ok ? `Keep your place for up to 20 minutes${step.left === 1 ? ' · one more time' : ''}` : step.why;
+      $('#worse-sub').textContent = r && r.status === 'open' ? `The nurse was told at ${r.at} · tap to add more` : 'Tell the nurse what has changed';
+
       why.classList.remove('hidden');
-      setHTML($('#why'), w.reasons.map(r => `<li>${escapeHtml(r)}</li>`).join(''));
+      setHTML($('#why'), w.reasons.map(x => `<li>${escapeHtml(x)}</li>`).join(''));
+
+      // a heads-up when they are nearly next, once
+      if (!away && w.position <= 2) {
+        if (!nearlyNoted && alertsOn) { buzz(200); beep(1); }
+        nearlyNoted = true;
+      } else {
+        nearlyNoted = false;
+      }
+      if (openKey) closeCalled();  // back in the queue (their consultation was paused)
     } else if (w.status === 'in_consult') {
       setHTML(card, `<p class="wait-token"><span class="token lg">${w.token}</span></p><h1 class="wait-h1">Please go to <b>${escapeHtml(w.room || 'the consultation room')}</b></h1><p class="wait-eta">A doctor is ready to see you now.</p>`);
       why.classList.add('hidden');
+      showCalled(w);
     } else {
-      const [title, text] = DONE[w.status] || ['Thank you', ''];
+      let [title, text] = DONE[w.status] || ['Thank you', ''];
+      if (w.left_by_you) {
+        [title, text] = ['You have left the queue', 'Thank you for letting us know. If you need care again, speak to the nurse at the desk: you will get a new token.'];
+      }
       setHTML(card, `<p class="wait-token"><span class="token lg">${w.token}</span></p><h1 class="wait-h1">${title}</h1><p class="wait-eta">${text}</p>`);
       why.classList.add('hidden');
+      if (openKey) closeCalled();
     }
-  }, 10000);
+  }, 4000, 15000);
 }
 
 // ---------------------------------------------------------------- admin reports
@@ -728,7 +960,9 @@ function initAdmin() {
       <span><b>${st.seen_today}</b>seen · ${st.left} left unseen</span>
       <span><b>${st.avg_wait} min</b>average wait</span>
       <span><b>${st.critical_wait} min</b>ESI 1–2 wait (target 10)</span>
-      <span><b>${st.overrides}</b>nurse override${st.overrides === 1 ? '' : 's'}</span>`);
+      <span><b>${st.overrides}</b>nurse override${st.overrides === 1 ? '' : 's'}</span>
+      <span><b>${st.reports}</b>“I feel worse” report${st.reports === 1 ? '' : 's'}${st.report_response !== null ? ` · checked in ${st.report_response} min on average` : ''}</span>
+      <span><b>${st.stepped_away}</b>stepped away · ${st.left_told} said they were leaving</span>`);
   }, 10000);
 
   getJSON('/api/admin/reports').then(r => {
@@ -811,4 +1045,4 @@ function initAdmin() {
 }
 
 // ---------------------------------------------------------------- router
-({ login: initLogin, triage: initTriage, prealert: initTriage, doctor: initDoctor, beds: initBeds, board: initBoard, admin: initAdmin, wait: initWait })[document.body.dataset.page]?.();
+({ login: initLogin, triage: initTriage, prealert: initTriage, doctor: initDoctor, beds: initBeds, board: initBoard, admin: initAdmin, wait: initWait, patient: initPatient })[document.body.dataset.page]?.();

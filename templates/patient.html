@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#24594a">
+  <meta name="robots" content="noindex">
+  <title>Find your visit · MediQueue ED</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231d3e9a'/%3E%3Crect x='2.5' y='2.5' width='27' height='27' rx='5' fill='none' stroke='white' stroke-width='1.5'/%3E%3Cpath d='M13 8h6v5h5v6h-5v5h-6v-5H8v-6h5z' fill='white'/%3E%3C/svg%3E">
+  <link rel="preload" href="{{ url_for('static', filename='fonts/archivo-latin-var.woff2') }}" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body class="wait-page" data-page="patient">
+  <header class="wait-head">
+    <div class="enamel-plate" aria-hidden="true"><span class="hi" lang="hi">आपातकालीन विभाग</span><span class="en">Emergency</span></div>
+    <p>MediQueue · for patients</p>
+  </header>
+  <main class="wait-main">
+    <section class="panel wait-card" aria-labelledby="find-title">
+      <h1 class="wait-h1" id="find-title">Find your place in the queue</h1>
+      <p class="wait-eta">Enter the token from your slip and the last 4 digits of the phone number you gave at the desk.</p>
+      {% if error %}
+      <div class="callout danger" role="alert" style="margin-top:14px"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg><span>{{ error }}</span></div>
+      {% endif %}
+      <form method="post" class="find-form" id="find-form">
+        <div class="field"><label for="p-token">Token</label>
+          <input id="p-token" name="token" required value="{{ token }}" placeholder="T032" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="next"></div>
+        <div class="field"><label for="p-phone">Last 4 digits of your phone</label>
+          <input id="p-phone" name="phone" required inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="4821" autocomplete="off" enterkeyhint="go"></div>
+        <button type="submit" class="btn btn-primary btn-lg btn-block">Show my place</button>
+      </form>
+      <p class="find-alt">Have your slip? Scan its QR code with your phone camera instead. No phone number given at the desk? Ask the nurse.</p>
+    </section>
+    {% if demo %}
+    <section class="panel demo-logins demo-patients" aria-labelledby="demo-title">
+      <h2 class="wait-h2" id="demo-title">Demo patients</h2>
+      <p>Made-up patients from the demo data. Pick one to fill the form.</p>
+      <div class="chip-row">
+        {% for d in demo %}
+        <button type="button" class="chip-btn" data-token="{{ d.token }}" data-phone="{{ d.last4 }}">
+          <b>{{ d.token }} <span class="esi-badge esi-{{ d.esi }}">ESI {{ d.esi }}</span></b>
+          <small>{{ d.label }} · {{ d.complaint }}</small><small>phone ends {{ d.last4 }}</small></button>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+    <p class="wait-foot"><a href="{{ url_for('login') }}">Hospital staff sign in</a></p>
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

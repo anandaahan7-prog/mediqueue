@@ -15,7 +15,7 @@
   <div class="slip-qr">{{ slip.qr|safe }}</div>
   <div class="slip-text">
     <h2 id="slip-title"><span class="token lg">{{ slip.token }}</span> <span class="esi-badge esi-{{ slip.esi }}">ESI {{ slip.esi }}</span></h2>
-    <p>Give the patient this token. Scanning the code opens their own page: their place in the queue, the expected wait, and why it changes.</p>
+    <p>Give the patient this token. Scanning the code opens their own page: their place in the queue, the expected wait, and why it changes.{% if slip.find_url %} Lost the slip? They can open <b>{{ slip.find_url }}</b> and enter the token and the last 4 digits of their phone.{% endif %}</p>
     <a class="btn btn-sm" href="{{ slip.url }}" target="_blank" rel="noopener">Open the patient's view<span class="sr-only"> (opens in a new tab)</span></a>
   </div>
 </section>
@@ -48,6 +48,13 @@
 </form>
 
 {% if not r %}
+<section class="panel hidden help-panel" id="help-panel" aria-labelledby="help-title">
+  <div class="panel-head">
+    <div><h2 id="help-title">Patients asking for help</h2><p class="hint">Sent with “I feel worse” on their own page. Go and see them, then re-triage or mark checked.</p></div>
+  </div>
+  <div id="help" class="list"></div>
+</section>
+
 <section class="panel hidden" id="incoming-panel" aria-labelledby="incoming-title">
   <div class="panel-head">
     <div><h2 id="incoming-title">Incoming ambulances</h2><p class="hint">Triaged before arrival. Press “Arrived” when the patient is at the door.</p></div>

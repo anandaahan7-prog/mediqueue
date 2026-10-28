@@ -8,10 +8,15 @@ Logins (password demo123): nurse priya, doctors rao / mehta / iyer / khan, admin
 """
 
 import hashlib
+import hmac
 import io
 import json
+import math
 import os
+import re
 import secrets
+import threading
+import time
 from functools import wraps
 from pathlib import Path
 
@@ -93,6 +98,14 @@ def tag_instance(response):
     return response
 
 VITAL_FIELDS = ["heart_rate", "systolic_bp", "resp_rate", "spo2", "temperature", "consciousness", "pain"]
+
+# what a patient can report from their own page ("I feel worse"); the first three are red flags for the nurse
+SYMPTOMS = {"breathing": "Harder to breathe", "chest": "Chest pain or tightness", "faint": "Dizzy or feeling faint",
+            "pain": "Pain is worse", "bleeding": "Bleeding more", "other": "Something else"}
+RED_FLAGS = {"breathing", "chest", "faint"}
+STEP_AWAY_MINUTES = (10, 20)
+STEP_AWAY_LIMIT = 2  # times per visit
+PATIENT_KINDS = {"worse", "away", "back", "left"}  # events a patient can cause from their own page
 
 
 # ---------------------------------------------------------------- helpers
@@ -235,6 +248,16 @@ def build_state(conn):
             eta[j["id"]] = {"plain": plain.get(j["id"], 0.0), "ml": ml}
 
     by_id = {r["visit_id"]: r for r in rows}
+    ts = stamp()
+    reports = conn.execute("""SELECT r.*, v.token, v.esi, p.name FROM patient_reports r
+                              JOIN visits v ON v.visit_id = r.visit_id JOIN patients p ON p.patient_id = v.patient_id
+                              WHERE r.status = 'open' AND v.status = 'waiting' ORDER BY r.at""").fetchall()
+    help_list = sorted(({"id": r["report_id"], "visit_id": r["visit_id"], "token": r["token"], "esi": r["esi"],
+                         "name": r["name"], "symptoms": [SYMPTOMS[k] for k in r["symptoms"].split(",")],
+                         "red_flag": bool(RED_FLAGS & set(r["symptoms"].split(","))),
+                         "ago": round(minutes_between(r["at"]))} for r in reports),
+                       key=lambda h: (not h["red_flag"], -h["ago"]))
+    feels_worse = {h["visit_id"] for h in help_list}
     queue = []
     for pos, job in enumerate(order_queue(waiting_jobs, now_min, policy, aging), start=1):
         r = by_id[job["id"]]
@@ -256,6 +279,8 @@ def build_state(conn):
             "eta": None if est is None else round(est["ml"]),
             "eta_range": None if est is None else [round5(max(0, est["ml"] * 0.75)), round5(est["ml"] * 1.25 + 5)],
             "spo2": r["spo2"], "heart_rate": r["heart_rate"],
+            "away": dispatch.is_away(r, ts), "away_until": r["away_until"][11:16] if dispatch.is_away(r, ts) else None,
+            "worse": r["visit_id"] in feels_worse,
         })
 
     alerts = conn.execute("""SELECT a.*, u.name AS doctor_name, u.room FROM prealerts a
@@ -295,7 +320,14 @@ def build_state(conn):
         FROM visits WHERE first_seen_at IS NOT NULL AND arrived_at >= :since""", {"since": shift_start()}).fetchone()
     left = conn.execute("SELECT COUNT(*) FROM visits WHERE status = 'left' AND arrived_at >= ?",
                         (shift_start(),)).fetchone()[0]
-    events = conn.execute("""SELECT e.at, e.kind, e.detail, v.token, u.name AS who FROM events e
+    patient_side = conn.execute("""
+        SELECT (SELECT COUNT(*) FROM patient_reports WHERE at >= :since) AS reports,
+               (SELECT AVG((julianday(handled_at) - julianday(at)) * 1440) FROM patient_reports
+                 WHERE at >= :since AND handled_at IS NOT NULL) AS response,
+               (SELECT COUNT(*) FROM events WHERE kind = 'away' AND at >= :since) AS stepped_away,
+               (SELECT COUNT(*) FROM events WHERE kind = 'left' AND user_id IS NULL AND at >= :since) AS left_told""",
+                                {"since": shift_start()}).fetchone()
+    events = conn.execute("""SELECT e.at, e.kind, e.detail, e.user_id, v.token, u.name AS who FROM events e
                              LEFT JOIN visits v ON v.visit_id = e.visit_id
                              LEFT JOIN users u ON u.user_id = e.user_id ORDER BY e.at DESC, e.event_id DESC LIMIT 14""").fetchall()
 
@@ -304,6 +336,7 @@ def build_state(conn):
         "aging_mode": "adaptive" if adaptive else "fixed",
         "hold_rooms": setting(conn, "hold_rooms", 1) == 1,
         "incoming": incoming,
+        "help": help_list,
         "queue": queue,
         "doctors": doctor_list,
         "preempt_doctor": dispatch.who_should_preempt(conn),
@@ -316,8 +349,12 @@ def build_state(conn):
             "waiting": len(queue), "in_consult": len(in_consult), "seen_today": today["seen"] or 0,
             "avg_wait": round(today["avg_wait"] or 0, 1), "critical_wait": round(today["critical_wait"] or 0, 1),
             "overrides": today["overrides"] or 0, "left": left, "on_duty": len(on_duty),
+            "reports": patient_side["reports"], "stepped_away": patient_side["stepped_away"],
+            "left_told": patient_side["left_told"],
+            "report_response": None if patient_side["response"] is None else round(patient_side["response"], 1),
         },
-        "events": [{"at": e["at"][11:16], "kind": e["kind"], "detail": e["detail"], "token": e["token"], "who": e["who"]}
+        "events": [{"at": e["at"][11:16], "kind": e["kind"], "detail": e["detail"], "token": e["token"],
+                    "who": e["who"] or ("patient's page" if e["user_id"] is None and e["kind"] in PATIENT_KINDS else None)}
                    for e in events],
     }
 
@@ -371,11 +408,13 @@ def triage():
                                     "ON p.patient_id = v.patient_id WHERE visit_id = ?",
                                     (request.args["retriage"],)).fetchone()
     if request.args.get("slip"):
-        row = get_db().execute("SELECT token, esi, public_code, ambulance FROM visits WHERE visit_id = ?",
+        row = get_db().execute("""SELECT v.token, v.esi, v.public_code, p.phone FROM visits v
+                                  JOIN patients p ON p.patient_id = v.patient_id WHERE v.visit_id = ?""",
                                (request.args["slip"],)).fetchone()
         if row is not None and row["public_code"]:
             url = url_for("wait_page", code=row["public_code"], _external=True)
-            slip = {"token": row["token"], "esi": row["esi"], "url": url, "qr": qr_svg(url)}
+            slip = {"token": row["token"], "esi": row["esi"], "url": url, "qr": qr_svg(url),
+                    "find_url": url_for("patient_login", _external=True).split("://", 1)[-1] if row["phone"] else None}
     return render_template("triage.html", page="triage", retriage=retriage, slip=slip)
 
 
@@ -532,6 +571,8 @@ def retriage(visit_id):
                   v["pain"], ai["esi"], ai["confidence"], new_esi, triage_model.predict_minutes(v, new_esi),
                   risk_of(ai["probs"], new_esi), visit_id))
     log_event(conn, "retriaged", f"ESI {visit['esi']} -> {new_esi} after new vitals", visit_id, g.user["user_id"])
+    conn.execute("UPDATE patient_reports SET status = 'retriaged', handled_by = ?, handled_at = ? "
+                 "WHERE visit_id = ? AND status = 'open'", (g.user["user_id"], stamp(), visit_id))
     conn.execute("COMMIT")
     flash(f"{visit['token']} re-triaged: ESI {visit['esi']} → {new_esi}.", "success")
     return redirect(url_for("triage"))
@@ -546,9 +587,29 @@ def left_without_seen(visit_id):
                        (stamp(), visit_id))
     if cur.rowcount:
         log_event(conn, "left", "left without being seen", visit_id, g.user["user_id"])
+        conn.execute("UPDATE patient_reports SET status = 'closed' WHERE visit_id = ? AND status = 'open'", (visit_id,))
     conn.execute("COMMIT")
     return reply("Marked as left without being seen." if cur.rowcount else "That patient is no longer waiting.",
                  "info" if cur.rowcount else "error", url_for("triage"))
+
+
+@app.route("/patient-reports/<int:report_id>/checked", methods=["POST"])
+@login_required("nurse", "admin")
+def report_checked(report_id):
+    """The nurse went to the patient who pressed "I feel worse" and found no change in urgency."""
+    conn = get_db()
+    conn.execute("BEGIN IMMEDIATE")
+    r = conn.execute("SELECT r.*, v.token FROM patient_reports r JOIN visits v ON v.visit_id = r.visit_id "
+                     "WHERE r.report_id = ? AND r.status = 'open'", (report_id,)).fetchone()
+    if r is None:
+        conn.execute("COMMIT")
+        return reply("That report was already handled.", "info", url_for("triage"))
+    conn.execute("UPDATE patient_reports SET status = 'checked', handled_by = ?, handled_at = ? WHERE report_id = ?",
+                 (g.user["user_id"], stamp(), report_id))
+    log_event(conn, "checked", "nurse checked the patient's report, no change in urgency", r["visit_id"],
+              g.user["user_id"])
+    conn.execute("COMMIT")
+    return reply(f"{r['token']} checked: no change in urgency.", "success", url_for("triage"))
 
 
 # ---------------------------------------------------------------- doctor console
@@ -597,14 +658,21 @@ def doctor_action(action):
     back = url_for("doctor")
     try:
         if action == "call-next":
+            skipped = []
             try:
-                visit_id = dispatch.call_next(conn, me)
+                visit_id = dispatch.call_next(conn, me, skipped)
             except dispatch.RoomHeld as held:
                 return reply(str(held), "info", back)
+            who = " and ".join(", ".join(skipped).rsplit(", ", 1))
             if visit_id is None:
+                if skipped:
+                    return reply(f"Everyone waiting has stepped away for a few minutes ({who}). Try again shortly.",
+                                 "info", back)
                 return reply("Nobody is waiting right now.", "info", back)
             token = conn.execute("SELECT token FROM visits WHERE visit_id = ?", (visit_id,)).fetchone()[0]
-            return reply(f"Please call token {token} to {g.user['room']}.", "success", back)
+            extra = (f" Skipped {who}: stepped away, {'keeps their' if len(skipped) == 1 else 'keep their'} place."
+                     if skipped else "")
+            return reply(f"Please call token {token} to {g.user['room']}.{extra}", "success", back)
         if action == "preempt":
             visit_id = dispatch.preempt_for_critical(conn, me)
             token = conn.execute("SELECT token FROM visits WHERE visit_id = ?", (visit_id,)).fetchone()[0]
@@ -654,25 +722,110 @@ def board():
 def api_board():
     state = build_state(get_db())
     calling = [{"token": d["current"]["token"], "room": d["room"]} for d in state["doctors"] if d["current"]]
-    waiting = [{"token": q["token"], "eta_range": q["eta_range"], "urgent": q["esi"] <= 2} for q in state["queue"]]
+    waiting = [{"token": q["token"], "eta_range": q["eta_range"], "urgent": q["esi"] <= 2, "away": q["away"]}
+               for q in state["queue"]]
     incoming = [{"eta_min": a["eta_min"], "room": a["room"]} for a in state["incoming"]]
     return jsonify({"calling": calling, "waiting": waiting, "incoming": incoming,
                     "doctors_on_duty": state["stats"]["on_duty"]})
 
 
 # ---------------------------------------------------------------- the patient's own page (QR on the token slip)
+#
+# Patients never get a password. The secret code in the QR link is their key; a patient who lost
+# the slip signs in with their token and the last 4 digits of the phone number given at the desk.
+
+FIND_LIMIT, FIND_WINDOW = 8, 600  # wrong tries allowed per address in 10 minutes
+_find_failures = {}
+_find_lock = threading.Lock()
+
+
+def client_address():
+    return (request.headers.get("X-Forwarded-For") or request.remote_addr or "?").split(",")[0].strip()
+
+
+def too_many_tries(addr):
+    with _find_lock:
+        recent = [t for t in _find_failures.get(addr, []) if time.monotonic() - t < FIND_WINDOW]
+        _find_failures[addr] = recent
+        return len(recent) >= FIND_LIMIT
+
+
+def note_failure(addr):
+    with _find_lock:
+        _find_failures.setdefault(addr, []).append(time.monotonic())
+
+
+def normalise_token(text):
+    """'t32', 'T 032' and '32' all mean T032."""
+    t = re.sub(r"\s+", "", text or "").upper()
+    digits = t[1:] if t.startswith("T") else t
+    return f"T{int(digits):03d}" if digits.isdigit() else t
+
+
+def demo_patients(conn):
+    """A few made-up patients to try the patient page with, picked live from the queue
+    (shown on the sign-in page like the demo staff accounts)."""
+    queue = build_state(conn)["queue"]
+    calm = [q for q in queue[1:-1] if q["esi"] >= 3 and not q["high_risk"] and not q["away"]][:1]
+    picks = {}
+    for q, label in ((queue[:1], "Next in line"), (calm, "{n} in line · may step away"), (queue[1:][-1:], "At the back")):
+        for item in q:
+            n = item["position"]
+            picks.setdefault(item["id"], (label.format(n=f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"), item))
+    if not picks:
+        return []
+    marks = ",".join("?" * len(picks))
+    phones = {r["visit_id"]: re.sub(r"\D", "", r["phone"] or "") for r in conn.execute(
+        f"SELECT v.visit_id, p.phone FROM visits v JOIN patients p ON p.patient_id = v.patient_id "
+        f"WHERE v.visit_id IN ({marks})", list(picks)).fetchall()}
+    return [{"token": q["token"], "esi": q["esi"], "label": label, "last4": phones[vid][-4:],
+             "complaint": q["complaint"]} for vid, (label, q) in picks.items() if len(phones.get(vid, "")) >= 4]
+
+
+@app.route("/patient", methods=["GET", "POST"])
+def patient_login():
+    conn = get_db()
+    error, status = None, 200
+    if request.method == "POST":
+        addr = client_address()
+        if too_many_tries(addr):
+            error, status = "Too many tries. Please wait 10 minutes, or ask the nurse at the desk.", 429
+        else:
+            row = conn.execute("""SELECT v.public_code, p.phone FROM visits v JOIN patients p ON p.patient_id = v.patient_id
+                                  WHERE v.token = ?""", (normalise_token(request.form.get("token")),)).fetchone()
+            given = re.sub(r"\D", "", request.form.get("phone", ""))
+            phone = re.sub(r"\D", "", (row["phone"] or "") if row else "")
+            if row and len(given) == 4 and len(phone) >= 4 and hmac.compare_digest(phone[-4:], given):
+                return redirect(url_for("wait_page", code=row["public_code"]))
+            note_failure(addr)
+            error = "We could not find that token with that phone number. Check your slip, or ask the nurse at the desk."
+    return render_template("patient.html", page="patient", error=error, demo=demo_patients(conn),
+                           token=request.form.get("token", "")), status
+
 
 @app.route("/wait/<code>")
 def wait_page(code):
     if get_db().execute("SELECT 1 FROM visits WHERE public_code = ?", (code,)).fetchone() is None:
         return render_template("wait.html", page="wait", code=None), 404
-    return render_template("wait.html", page="wait", code=code)
+    return render_template("wait.html", page="wait", code=code, symptoms=SYMPTOMS, away_minutes=STEP_AWAY_MINUTES)
+
+
+def can_step_away(conn, visit):
+    """(allowed, reason). Urgent patients, and those the AI thinks may be an emergency, are asked to stay."""
+    adaptive = dispatch.queue_policy(conn) == "mediqueue"
+    if visit["esi"] <= 2 or (adaptive and (visit["ai_risk"] or 0) >= RISK_CAP_THRESHOLD):
+        return False, "You may need a doctor soon, so please stay in the waiting area."
+    if visit["away_count"] >= STEP_AWAY_LIMIT:
+        return False, f"You have already stepped away {STEP_AWAY_LIMIT} times. Please stay close: your turn is coming."
+    return True, None
 
 
 def why_waiting(me, queue, state):
     """Plain reasons for a waiting patient's place in the queue. Only counts, never anyone else's details."""
     ahead = queue[:me["position"] - 1]
     reasons = []
+    if me["away"]:
+        reasons.append("You have stepped away, so doctors skip your token until you are back. You keep your place.")
     later_urgent = sum(1 for q in ahead if q["arrived_min"] > me["arrived_min"])
     if later_urgent:
         reasons.append(f"{later_urgent} {'person' if later_urgent == 1 else 'people'} who came in after you "
@@ -711,9 +864,83 @@ def api_wait(code):
             steps = int(me["waited"] // me["aging_every"]) + 1
             out["next_step_in"] = max(1, round(steps * me["aging_every"] - me["waited"]))
             out["aging_every"] = me["aging_every"]
+        if me["away"]:
+            out["away"] = {"until": me["away_until"], "left": max(1, math.ceil(-minutes_between(row["away_until"])))}
+        ok, why = can_step_away(conn, row)
+        out["step_away"] = {"ok": ok, "why": why, "left": max(0, STEP_AWAY_LIMIT - row["away_count"])}
+        report = conn.execute("SELECT * FROM patient_reports WHERE visit_id = ? ORDER BY report_id DESC LIMIT 1",
+                              (row["visit_id"],)).fetchone()
+        if report is not None:
+            out["report"] = {"at": report["at"][11:16], "status": report["status"],
+                             "handled_at": report["handled_at"][11:16] if report["handled_at"] else None}
     elif row["status"] == "in_consult":
         out["room"] = row["room"]
+        out["called_at"] = row["consult_started_at"]  # a new call (e.g. after a pause) shows the alert again
+    elif row["status"] == "left":
+        out["left_by_you"] = conn.execute("SELECT 1 FROM events WHERE visit_id = ? AND kind = 'left' AND user_id IS NULL",
+                                          (row["visit_id"],)).fetchone() is not None
     return jsonify(out)
+
+
+@app.route("/api/wait/<code>/<action>", methods=["POST"])
+def patient_action(code, action):
+    """Buttons on the patient's own page. The secret code in the link is the only key."""
+    conn = get_db()
+    data = request.get_json(silent=True) or {}
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        v = conn.execute("SELECT * FROM visits WHERE public_code = ?", (code,)).fetchone()
+        if v is None:
+            conn.execute("COMMIT")
+            return jsonify({"error": "unknown"}), 404
+        if v["status"] != "waiting":
+            conn.execute("COMMIT")
+            return jsonify({"message": "You are not in the waiting queue any more.", "category": "info"}), 409
+        vid = v["visit_id"]
+        if action == "worse":
+            keys = [k for k in data.get("symptoms", []) if k in SYMPTOMS] or ["other"]
+            open_report = conn.execute("SELECT * FROM patient_reports WHERE visit_id = ? AND status = 'open'",
+                                       (vid,)).fetchone()
+            if open_report:  # still waiting for the nurse: add to the same report
+                keys = list(dict.fromkeys(open_report["symptoms"].split(",") + keys))
+                conn.execute("UPDATE patient_reports SET symptoms = ? WHERE report_id = ?",
+                             (",".join(keys), open_report["report_id"]))
+            else:
+                conn.execute("INSERT INTO patient_reports (visit_id, at, symptoms) VALUES (?, ?, ?)",
+                             (vid, stamp(), ",".join(keys)))
+            log_event(conn, "worse", "feels worse: " + ", ".join(SYMPTOMS[k].lower() for k in keys), vid)
+            answer = ("The nurse has been told. Stay where you are: someone will come to check on you.", "success")
+        elif action == "away":
+            ok, why = can_step_away(conn, v)
+            if not ok or dispatch.is_away(v):
+                conn.execute("COMMIT")
+                return jsonify({"message": why or "You have already stepped away.", "category": "error"}), 409
+            minutes = int(data.get("minutes", 0) or 0)
+            minutes = minutes if minutes in STEP_AWAY_MINUTES else STEP_AWAY_MINUTES[0]
+            until = now() + timedelta(minutes=minutes)
+            conn.execute("UPDATE visits SET away_until = ?, away_count = away_count + 1 WHERE visit_id = ?",
+                         (stamp(until), vid))
+            log_event(conn, "away", f"stepped away for {minutes} min, back by {stamp(until)[11:16]}", vid)
+            answer = (f"You can step away until {stamp(until)[11:16]}. You keep your place in the queue.", "success")
+        elif action == "back":
+            conn.execute("UPDATE visits SET away_until = NULL WHERE visit_id = ?", (vid,))
+            if dispatch.is_away(v):
+                log_event(conn, "back", "back in the waiting area", vid)
+            answer = ("Welcome back. A doctor can call your token again.", "success")
+        elif action == "leave":
+            conn.execute("UPDATE visits SET status = 'left', finished_at = ?, away_until = NULL WHERE visit_id = ?",
+                         (stamp(), vid))
+            conn.execute("UPDATE patient_reports SET status = 'closed' WHERE visit_id = ? AND status = 'open'", (vid,))
+            log_event(conn, "left", "left without being seen (told us on their page)", vid)
+            answer = ("You have left the queue. Thank you for letting us know.", "info")
+        else:
+            conn.execute("COMMIT")
+            return jsonify({"error": "unknown action"}), 400
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return jsonify({"message": answer[0], "category": answer[1]})
 
 
 # ---------------------------------------------------------------- admin

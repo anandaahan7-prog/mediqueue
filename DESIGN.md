@@ -428,7 +428,19 @@ List row with the ambulance glyph in enamel, the A-code as a token, ESI badge, c
 After a token is issued the triage desk shows a slip: white plate with an enamel keyline, an SVG QR code (dark #14201b on white, 2-module quiet zone, viewBox only so it scales) beside the token in condensed caps, its ESI badge, one sentence on what the code opens, and an "Open the patient's view" button.
 
 ### Patient's own page
-Phone first, opened from the QR, no login and no names. A dado-green header with a small enamel EMERGENCY plate, then white panels: the token and arrival time, "You are 12th in the queue" in condensed caps with the position in enamel, the expected range, an enamel-wash note when their priority is about to rise, and a "Why you are waiting" list of plain counts (who came later but is more urgent, ambulances on the way, doctors on duty). It refreshes every 10 seconds; status changes replace the card ("Please go to Room 2", "You are being admitted").
+Phone first, opened from the QR, no login and no names. A dado-green header with a small enamel EMERGENCY plate, then white panels: the token and arrival time, "You are 12th in the queue" in condensed caps with the position in enamel, the expected range, an enamel-wash note when their priority is about to rise, and a "Why you are waiting" list of plain counts (who came later but is more urgent, ambulances on the way, doctors on duty). It refreshes every 4 seconds (every 15 in a background tab); status changes replace the card ("You are being admitted"). Brass-wash note "You are next" / "Nearly your turn" at positions 1–2; enamel-wash note with a full-width "I'm back" button while stepped away; red-wash note while a "feels worse" report is open, green once a nurse has checked or re-triaged.
+
+### Patient actions ("While you wait")
+An accordion of full-width rows, one open at a time: 40px round icon well, bold label, muted one-line explanation, chevron. "I feel worse" has a red well and opens a two-column grid of 52px check chips (red when ticked) and a solid red "Tell the nurse"; "Step away" opens 10/20-minute chips (green when chosen) and is drawn dashed and disabled, with the reason as its subtitle, when the patient may not leave; "Sound and vibration" is a switch (green when on); "I'm leaving" has a grey well and asks in place, with the destructive outline button beside "Stay in the queue". Confirmations appear as a toast pinned to the bottom of the screen.
+
+### The call ("Please go to Room 3")
+When the patient is called the whole screen turns enamel-deep and shows one cobalt enamel sign with the white inner keyline: the token, "PLEASE GO TO" and the room in condensed caps at up to 108px, one sentence, and a white "I'm on my way" button that takes focus. It scales in and glows brass twice (fades only with reduced motion), and comes with a beep and a vibration when the patient switched them on.
+
+### Patient sign-in
+Same chrome as the patient page: one panel with a condensed-caps heading, two 50px inputs (token, last 4 digits) and the primary "Show my place". Demo patients sit below as full-width chips: token with its ESI badge, where they are in the queue, their complaint, and the phone ending.
+
+### Help requests on the triage desk
+A panel with a red inner keyline above the ambulances: one list row per open report with a red warning glyph, token, ESI badge, name, a "red flag" tag for breathing, chest pain or faintness, the symptoms in bold (red for red flags) and how long ago, then "Re-triage" (primary) and "Checked, no change". New reports drop in once. The queue repeats them as a red "feels worse" tag, and a stepped-away patient carries an enamel "away till 11:05" tag (and a dashed outline tile on the TV).
 
 ## Do's and Don'ts
 

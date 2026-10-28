@@ -874,6 +874,130 @@ fieldset.choice input, label.check input { margin-top: 3px; width: 16px; height:
 .why { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--ink-2); }
 .wait-foot { color: var(--muted); font-size: 14px; text-align: center; }
 
+/* ---------------------------------------------------------------- the patient's side: sign-in, actions, the call */
+.nav-count.alert { background: var(--danger); color: #fff; }
+.nav-count.alert:not(:empty) + .nav-count { margin-left: 6px; }
+
+.find-form { display: grid; gap: 12px; margin-top: 16px; }
+.find-form input:not([type="checkbox"]) { min-height: 50px; font-size: 18px; letter-spacing: .03em; }
+.find-alt { color: var(--muted); font-size: 14px; margin-top: 14px; }
+.demo-patients { margin-top: 0; border-top: 0; }
+.demo-patients .chip-row { grid-template-columns: 1fr; }
+.demo-patients .chip-btn { min-height: 64px; justify-content: center; }
+.demo-patients .chip-btn b { display: flex; align-items: center; gap: 8px; font-size: 18px; }
+.demo-patients .esi-badge { font-size: 12px; padding: 2px 6px 1px; }
+
+.act-list { display: grid; gap: 10px; }
+.act-btn {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  width: 100%; min-height: 66px; padding: 10px 14px 10px 12px; text-align: left; cursor: pointer;
+  border: 1.5px solid var(--line-strong); border-radius: var(--r); background: var(--surface); color: var(--ink);
+  user-select: none; -webkit-user-select: none; touch-action: manipulation;
+  transition: transform 160ms var(--ease-out), border-color 160ms ease, background-color 160ms ease;
+}
+.act-btn:active:not(:disabled) { transform: scale(.98); }
+.act-btn:disabled { cursor: not-allowed; background: var(--surface-2); border-style: dashed; }
+.act-btn:disabled .act-ico { background: var(--line); color: var(--muted); }
+.act-btn:disabled .chev { visibility: hidden; }
+.act-btn b { display: block; font-size: 17px; font-weight: 800; line-height: 1.2; }
+.act-btn small { display: block; color: var(--muted); font-size: 14px; margin-top: 2px; }
+.act-ico { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--enamel-soft); color: var(--enamel); transition: background-color 160ms ease, color 160ms ease; }
+:root[data-theme="dark"] .act-ico { color: var(--enamel-text); }
+.act-ico svg, .act-btn .chev { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.act-btn .chev { color: var(--muted); transition: transform 200ms var(--ease-out); }
+.act-btn[aria-expanded="true"] { border-color: var(--ink-2); }
+.act-btn[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.act-btn.worse .act-ico { background: var(--danger-soft); color: var(--danger); }
+.act-btn.worse[aria-expanded="true"] { border-color: var(--danger); }
+.act-btn.quiet .act-ico { background: var(--surface-2); color: var(--ink-2); }
+.act-body { display: grid; gap: 12px; padding: 12px 2px 4px; }
+.act-body[hidden] { display: none; }
+.act-note { color: var(--ink-2); font-size: 14px; }
+.act-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.act-pair .btn { white-space: normal; }
+.check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.check-grid legend { font-size: 15px; font-weight: 700; font-stretch: 100%; letter-spacing: 0; text-transform: none; color: var(--ink-2); margin-bottom: 8px; }
+.check-chip {
+  display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 10px 12px; cursor: pointer;
+  border: 1.5px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface-2);
+  font-weight: 700; font-size: 15px; line-height: 1.2; user-select: none; -webkit-user-select: none;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+.check-chip input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--danger); }
+.check-chip:has(input:checked) { border-color: var(--danger); background: var(--danger-soft); }
+.choice-chip input { accent-color: var(--dado); }
+.choice-chip:has(input:checked) { border-color: var(--dado); background: var(--dado-soft); }
+.check-chip:has(input:focus-visible) { border-color: var(--enamel); box-shadow: 0 0 0 3px color-mix(in srgb, var(--enamel) 25%, transparent); }
+.switch { position: relative; width: 46px; height: 28px; border-radius: 14px; background: var(--line-strong); transition: background-color 160ms ease; }
+.switch::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform 200ms var(--ease-out);
+}
+.act-btn[aria-pressed="true"] .switch { background: var(--dado); }
+.act-btn[aria-pressed="true"] .switch::after { transform: translateX(18px); }
+.act-btn[aria-pressed="true"] .act-ico { background: var(--dado-soft); color: var(--dado); }
+:root[data-theme="dark"] .act-btn[aria-pressed="true"] .act-ico { color: var(--dado-ink); }
+
+.wait-note { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: var(--enamel-soft); }
+.wait-note > .ico { width: 20px; height: 20px; margin-top: 1px; color: var(--enamel); }
+.wait-note > div { flex: 1; min-width: 0; }
+.wait-note strong { display: block; font-size: 16px; }
+.wait-note p { color: var(--ink-2); font-size: 14px; margin-top: 2px; }
+.wait-note .btn { margin-top: 10px; }
+.wait-note.next { background: var(--brass-soft); }
+.wait-note.next > .ico { color: var(--brass-deep); }
+:root[data-theme="dark"] .wait-note.next > .ico { color: var(--brass); }
+.wait-note.report.open { background: var(--danger-soft); }
+.wait-note.report.open > .ico { color: var(--danger); }
+.wait-note.report.checked, .wait-note.report.retriaged { background: var(--success-soft); }
+.wait-note.report.checked > .ico, .wait-note.report.retriaged > .ico { color: var(--success); }
+.wait-page .toast {
+  position: fixed; z-index: 40; max-width: 528px; margin: 0 auto;
+  left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 12px 30px -12px rgba(20, 32, 27, .5);
+}
+.wait-foot a { font-weight: 700; }
+
+/* "Please go to Room 3": the whole screen becomes a cobalt enamel sign */
+.called {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  padding: max(20px, env(safe-area-inset-top, 0px)) 16px max(20px, env(safe-area-inset-bottom, 0px));
+  background: var(--enamel-deep); overscroll-behavior: contain;
+}
+.called[hidden] { display: none; }
+.called-sign {
+  width: min(440px, 100%); display: grid; gap: 14px; justify-items: center; text-align: center;
+  padding: 30px 22px 22px; border-radius: 18px; background: var(--enamel); color: #fff;
+  box-shadow: inset 0 0 0 4px var(--enamel), inset 0 0 0 7px rgba(255, 255, 255, .92), 0 24px 60px -24px rgba(0, 0, 0, .6);
+}
+.called-token { font-weight: 900; font-size: 22px; letter-spacing: .04em; color: rgba(255, 255, 255, .88); }
+.called h1 { display: grid; gap: 6px; font-weight: 900; text-transform: uppercase; font-stretch: 68%; line-height: .95; }
+.called h1 span { font-size: 22px; letter-spacing: .08em; }
+.called h1 b { font-size: clamp(64px, 21vw, 108px); letter-spacing: .01em; }
+.called-sign > p:not(.called-token) { font-size: 17px; color: rgba(255, 255, 255, .92); }
+.called-sign .btn { margin-top: 6px; background: #fff; border-color: #fff; color: var(--enamel-deep); }
+.called.enter .called-sign { animation: call-in 300ms var(--ease-out) both, sign-glow 1400ms ease-in-out 300ms 2; }
+@keyframes sign-glow {
+  50% { box-shadow: inset 0 0 0 4px var(--enamel), inset 0 0 0 7px rgba(255, 255, 255, .92), 0 0 0 12px rgba(176, 141, 60, .9); }
+}
+
+/* triage desk: patients who pressed "I feel worse" */
+.help-panel { box-shadow: inset 0 0 0 2px var(--danger), var(--shadow); }
+.help-item .help-ico { color: var(--danger); }
+.help-item .help-ico .ico { width: 22px; height: 22px; }
+.help-item .line2 b { color: var(--ink); font-weight: 700; }
+.help-item.is-red .line2 b { color: var(--danger-ink); }
+.help-item.fresh { animation: alarm-in 220ms var(--ease-out) both; }
+
+/* waiting-room TV: a token that stepped away keeps its tile, drawn as an outline */
+.waiting-tile.away { background: transparent; box-shadow: none; outline: 1.5px dashed rgba(255, 255, 255, .55); outline-offset: -1.5px; }
+.waiting-tile.away b { opacity: .7; }
+
+@media (max-width: 380px) {
+  .check-grid { grid-template-columns: 1fr; }
+}
+
 /* ---------------------------------------------------------------- state-change motion */
 .level-plate.settle { animation: plate-settle 200ms var(--ease-out) both; }
 @keyframes plate-settle { from { opacity: .35; transform: scale(.94); } }
@@ -897,7 +1021,8 @@ fieldset.choice input, label.check input { margin-top: 3px; width: 16px; height:
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; scroll-behavior: auto !important; }
   /* gentler, not gone: state changes still fade in, nothing slides or pulses */
-  .level-plate.settle, .alarm.alarm-enter, .alarm.alarm-enter:not(.calm), .calling.just-called { animation: fade-in 150ms ease both !important; }
+  .level-plate.settle, .alarm.alarm-enter, .alarm.alarm-enter:not(.calm), .calling.just-called,
+  .called.enter .called-sign, .help-item.fresh { animation: fade-in 150ms ease both !important; }
 }
 @media print {
   .rail, .topbar, .row-actions { display: none !important; }

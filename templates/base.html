@@ -26,7 +26,7 @@
       <p class="nav-group">Workspace</p>
       {% if me.role in ('nurse', 'admin') %}
       <a href="{{ url_for('triage') }}" {% if page == 'triage' %}class="active" aria-current="page"{% endif %}>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6v4H9zM5 5h4M15 5h4v16H5V5"/><path d="M9 13h6M12 10v6"/></svg> Triage desk <span class="nav-count" id="nav-waiting" title="Patients waiting"></span></a>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6v4H9zM5 5h4M15 5h4v16H5V5"/><path d="M9 13h6M12 10v6"/></svg> Triage desk <span class="nav-count alert" id="nav-help" title="Patients asking for help"></span><span class="nav-count" id="nav-waiting" title="Patients waiting"></span></a>
       <a href="{{ url_for('prealert') }}" {% if page == 'prealert' %}class="active" aria-current="page"{% endif %}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 6.5h11v10h-11zM13.5 10h4.2l3.3 3.4v3.1h-7.5"/><circle cx="6.5" cy="17.5" r="1.9"/><circle cx="17" cy="17.5" r="1.9"/><path d="M8 8.8v4.4M5.8 11h4.4"/></svg> Ambulances <span class="nav-count" id="nav-incoming" title="Ambulances on the way"></span></a>
       {% endif %}

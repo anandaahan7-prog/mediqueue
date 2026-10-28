@@ -5,6 +5,7 @@ always looks like a busy afternoon whenever you run it.
     python seed.py
 """
 
+import random
 import secrets
 from datetime import timedelta
 
@@ -36,6 +37,11 @@ NAMES = ["Aarav Shah", "Diya Kulkarni", "Kabir Singh", "Ananya Rao", "Rohan Das"
          "Rehan Ansari", "Gauri Kulkarni", "Ayaan Thomas", "Rahul Mishra", "Bhavna Rawat"]
 
 
+# made-up mobile numbers, so patients can find their visit with token + last 4 digits.
+# A separate generator, so the vitals drawn from `rng` stay exactly the same.
+PHONES = random.Random(41)
+
+
 def insert_visit(conn, rng, name, arrived, status, vitals=None, complaint=None, final_esi=None, override=None,
                  doctor=None, started=None, finished=None, seen=None, nurse=1):
     v = vitals or sample_patient(rng, complaint)
@@ -45,8 +51,9 @@ def insert_visit(conn, rng, name, arrived, status, vitals=None, complaint=None, 
     sex = "F" if name.split()[0] in {"Diya", "Ananya", "Meera", "Isha", "Sana", "Neha", "Tara", "Pooja", "Nisha",
                                      "Aisha", "Kavya", "Riya", "Zoya", "Lakshmi", "Fatima", "Sneha", "Jaya",
                                      "Tanvi", "Gauri", "Bhavna"} else "M"
-    pid = conn.execute("INSERT INTO patients (name, age, sex, created_at) VALUES (?, ?, ?, ?)",
-                       (name, v["age"], sex, stamp(arrived))).lastrowid
+    phone = f"9{PHONES.randrange(10**8, 10**9)}"
+    pid = conn.execute("INSERT INTO patients (name, age, sex, phone, created_at) VALUES (?, ?, ?, ?, ?)",
+                       (name, v["age"], sex, phone, stamp(arrived))).lastrowid
     count = conn.execute("SELECT COUNT(*) FROM visits").fetchone()[0]
     vid = conn.execute(
         """INSERT INTO visits (patient_id, token, arrived_at, complaint, heart_rate, systolic_bp, resp_rate, spo2,
@@ -66,6 +73,7 @@ def insert_visit(conn, rng, name, arrived, status, vitals=None, complaint=None, 
 
 
 def main():
+    PHONES.seed(41)
     conn = init_db()  # schema.sql drops and recreates every table, so this also works while the app is running
     rng = np.random.default_rng(2026)
     t0 = now()

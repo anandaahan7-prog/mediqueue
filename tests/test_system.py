@@ -43,6 +43,7 @@ def triage(c, name, vitals, **extra):
 class MediQueueTests(unittest.TestCase):
     def setUp(self):
         seed.main()
+        webapp._find_failures.clear()
         self.db = connect()
 
     def tearDown(self):
@@ -215,6 +216,87 @@ class MediQueueTests(unittest.TestCase):
         names = [row["name"] for row in self.db.execute("SELECT name FROM patients")]
         self.assertFalse(any(n in json.dumps(data) for n in names))
         self.assertEqual(anon.get("/api/wait/not-a-code").status_code, 404)
+
+    # ---- the patient side: sign-in and actions ----
+    def visit(self, visit_id):
+        return self.db.execute("SELECT v.*, p.phone FROM visits v JOIN patients p USING(patient_id) WHERE visit_id = ?",
+                               (visit_id,)).fetchone()
+
+    def test_patient_finds_visit_with_token_and_phone(self):
+        v = self.visit(35)
+        anon = webapp.app.test_client()
+        page = anon.get("/patient").get_data(as_text=True)
+        self.assertIn("Demo patients", page)
+        names = [row["name"] for row in self.db.execute("SELECT name FROM patients")]
+        self.assertFalse(any(n in page for n in names))
+        r = anon.post("/patient", data={"token": "t35", "phone": v["phone"][-4:]})  # "t35" means T035
+        self.assertEqual(r.headers["Location"], f"/wait/{v['public_code']}")
+        r = anon.post("/patient", data={"token": "T035", "phone": "0000" if v["phone"][-4:] != "0000" else "1111"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b"could not find", r.data)
+        for _ in range(webapp.FIND_LIMIT):
+            anon.post("/patient", data={"token": "T035", "phone": "12"})
+        r = anon.post("/patient", data={"token": "T035", "phone": v["phone"][-4:]})
+        self.assertEqual(r.status_code, 429)  # too many wrong tries: even the right answer waits
+
+    def test_stepped_away_patient_is_skipped_and_keeps_place(self):
+        head = webapp.build_state(self.db)["queue"][0]
+        self.db.execute("UPDATE visits SET away_until = datetime('now', '+5 hours', '+30 minutes', '+10 minutes') "
+                        "WHERE visit_id = ?", (head["id"],))
+        r = client_as("iyer").post("/doctor/call-next", headers={"X-Requested-With": "fetch"}).get_json()
+        self.assertIn(f"Skipped {head['token']}", r["message"])
+        self.assertEqual(self.visit(head["id"])["status"], "waiting")
+        later = webapp.build_state(self.db)["queue"]
+        self.assertEqual(later[0]["id"], head["id"])  # still first in line, just not dispatched
+        self.assertTrue(later[0]["away"])
+
+    def test_step_away_rules(self):
+        queue = webapp.build_state(self.db)["queue"]
+        urgent = next(q for q in queue if q["esi"] <= 2)
+        calm = next(q for q in queue if q["esi"] >= 4)
+        anon = webapp.app.test_client()
+        r = anon.post(f"/api/wait/{self.visit(urgent['id'])['public_code']}/away", json={"minutes": 10})
+        self.assertEqual(r.status_code, 409)  # ESI 1-2 are asked to stay
+        code = self.visit(calm["id"])["public_code"]
+        for _ in range(webapp.STEP_AWAY_LIMIT):
+            self.assertEqual(anon.post(f"/api/wait/{code}/away", json={"minutes": 20}).status_code, 200)
+            self.assertTrue(anon.get(f"/api/wait/{code}").get_json()["away"])
+            anon.post(f"/api/wait/{code}/back")
+            self.assertNotIn("away", anon.get(f"/api/wait/{code}").get_json())
+        self.assertEqual(anon.post(f"/api/wait/{code}/away", json={"minutes": 10}).status_code, 409)
+
+    def test_feel_worse_reaches_the_nurse(self):
+        calm = next(q for q in webapp.build_state(self.db)["queue"] if q["esi"] >= 4)
+        code = self.visit(calm["id"])["public_code"]
+        anon = webapp.app.test_client()
+        anon.post(f"/api/wait/{code}/worse", json={"symptoms": ["chest", "made-up"]})
+        nurse = client_as("priya")
+        help_ = nurse.get("/api/state").get_json()["help"]
+        self.assertEqual([(h["visit_id"], h["red_flag"]) for h in help_], [(calm["id"], True)])
+        nurse.post(f"/patient-reports/{help_[0]['id']}/checked")
+        self.assertEqual(nurse.get("/api/state").get_json()["help"], [])
+        self.assertEqual(anon.get(f"/api/wait/{code}").get_json()["report"]["status"], "checked")
+        anon.post(f"/api/wait/{code}/worse", json={"symptoms": ["breathing"]})
+        nurse.post(f"/visits/{calm['id']}/retriage", data=HEART_ATTACK)  # re-triage answers the report too
+        self.assertEqual(anon.get(f"/api/wait/{code}").get_json()["report"]["status"], "retriaged")
+
+    def test_called_alert_and_leaving(self):
+        head = webapp.build_state(self.db)["queue"][0]
+        code = self.visit(head["id"])["public_code"]
+        anon = webapp.app.test_client()
+        client_as("iyer").post("/doctor/call-next")
+        w = anon.get(f"/api/wait/{code}").get_json()
+        self.assertEqual((w["status"], w["room"]), ("in_consult", "Room 3"))
+        self.assertTrue(w["called_at"])  # the page shows "Please go to Room 3" once per call
+        other = webapp.build_state(self.db)["queue"][-1]
+        code = self.visit(other["id"])["public_code"]
+        self.assertEqual(anon.post(f"/api/wait/{code}/leave").status_code, 200)
+        w = anon.get(f"/api/wait/{code}").get_json()
+        self.assertEqual((w["status"], w["left_by_you"]), ("left", True))
+        self.assertEqual(anon.post(f"/api/wait/{code}/away").status_code, 409)  # no longer in the queue
+        state = client_as("priya").get("/api/state").get_json()
+        self.assertEqual(state["stats"]["left_told"], 1)
+        self.assertEqual(state["events"][0]["who"], "patient's page")
 
     # ---- beds (counting semaphore) ----
     def test_no_bed_means_boarding_then_signal(self):

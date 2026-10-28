@@ -4,6 +4,7 @@ PRAGMA foreign_keys = ON;
 DROP VIEW IF EXISTS v_queue;
 DROP VIEW IF EXISTS v_today_stats;
 DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS patient_reports;
 DROP TABLE IF EXISTS prealerts;
 DROP TABLE IF EXISTS beds;
 DROP TABLE IF EXISTS visits;
@@ -61,6 +62,8 @@ CREATE TABLE visits (
     consult_started_at TEXT,
     consult_done_min   REAL NOT NULL DEFAULT 0,  -- minutes already spent with a doctor (kept across a pause)
     paused_count       INTEGER NOT NULL DEFAULT 0,
+    away_until         TEXT,                     -- patient stepped away: skipped by "Call next" until then
+    away_count         INTEGER NOT NULL DEFAULT 0,
     finished_at        TEXT,
     triaged_by         INTEGER REFERENCES users(user_id)
 );
@@ -104,6 +107,17 @@ CREATE TABLE prealerts (
     created_by        INTEGER REFERENCES users(user_id)
 );
 
+-- "I feel worse" reports sent from the patient's own page; the nurse re-triages or marks them checked
+CREATE TABLE patient_reports (
+    report_id  INTEGER PRIMARY KEY,
+    visit_id   INTEGER NOT NULL REFERENCES visits(visit_id),
+    at         TEXT NOT NULL,
+    symptoms   TEXT NOT NULL,                    -- comma-separated keys, see SYMPTOMS in app.py
+    status     TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'checked', 'retriaged', 'closed')),
+    handled_by INTEGER REFERENCES users(user_id),
+    handled_at TEXT
+);
+
 -- audit trail of every scheduling / bed decision
 CREATE TABLE events (
     event_id INTEGER PRIMARY KEY,
@@ -122,6 +136,7 @@ CREATE TABLE settings (
 CREATE INDEX idx_visits_status ON visits(status, esi, arrived_at);
 CREATE INDEX idx_visits_doctor ON visits(doctor_id, status);
 CREATE INDEX idx_events_visit ON events(visit_id, at);
+CREATE INDEX idx_reports_visit ON patient_reports(visit_id, status);
 
 CREATE VIEW v_queue AS
 SELECT v.*, p.name AS patient_name, p.age, p.sex

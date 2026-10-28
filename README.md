@@ -35,6 +35,7 @@ consultation-time model, gradient-boosting waiting-time correction.
 | **Risk-adaptive aging** | The AI's probability that an ESI 3–5 patient is really an emergency (their *emergency risk*) shortens their aging interval, and from 30% lets them age into level 2. Low-risk patients still never pass level 3. | Patients the AI under-triaged wait **60 → 50 min**; ESI 1–2 wait unchanged (**9.4 min**); ESI 4–5 95th percentile 206 → 216 min |
 | **Ambulance pre-alert with a held room** | A crew calls ahead; the patient is triaged before arrival. For ESI 1–2 the room of the doctor free closest to (but before) the ETA is held (best-fit reservation), and that doctor's “Call next” only gives patients whose predicted consult ends before the ambulance does (deadline-aware dispatch, like backfilling). On arrival the patient goes straight in. | Ambulance door-to-doctor **8.7 → 4.6 min**, on time 73% → 85%; everyone else waits 43.9 → 49.0 min (the price of a reservation) |
 | **“Why am I waiting?” page** | Each token slip has a QR code. It opens the patient's own page: their place in the queue, the expected range, when their priority rises, and plain reasons (who came later but is more urgent, ambulances on the way, doctors on duty). Counts only, never anyone else's details. | Tested: no other patient's name ever appears |
+| **The patient's phone** | No passwords: the QR link, or the token plus the last 4 digits of the phone (8 wrong tries per 10 min). **I feel worse** puts an alert on the triage desk, red flags first, until the nurse re-triages or marks it checked. **Step away** (10 or 20 min, twice per visit, not for ESI 1–2 or high-risk patients) makes the patient a *blocked process*: still in the queue with their waiting time, but “Call next” skips them until “I'm back” or the timer ends. When called, the phone shows a full-screen “Please go to Room 3” with a beep and a buzz. **I'm leaving** closes the visit and counts in the reports. | Tested: skipped while away and first again after, step-away rules, report → checked / re-triaged, called alert, leaving, sign-in limits |
 
 Both scheduling features can be switched off in **Reports & settings**, so the trade-offs can be shown live.
 
@@ -61,7 +62,8 @@ Password for every account is `demo123`:
 | `rao`, `mehta`, `iyer` (on duty), `khan` (off duty) | doctor |
 | `admin` | reports & settings |
 
-The waiting-room display is at http://localhost:5000/board (no login).
+The waiting-room display is at http://localhost:5000/board (no login). Patients use http://localhost:5000/patient
+(token + last 4 digits of their phone); it lists three demo patients from the queue to pick from.
 
 The trained models are already in `models/`. To rebuild everything from scratch:
 
@@ -87,7 +89,7 @@ database. Every response carries an `X-MediQueue-Instance` header showing which 
 npx vercel deploy --prod
 ```
 
-## Suggested demo (about 13 minutes)
+## Suggested demo (about 14 minutes)
 
 1. **Triage desk** (log in as `priya`): the door plates at the top show each room as Busy / Free / Off. Click
    *Fill an example patient*, show the AI level plate, the reasons and the red "out of range" vitals. Pick a
@@ -106,8 +108,11 @@ npx vercel deploy --prod
    pain 8, chest pain, arriving in 6 min → ESI 2 and a held room. The held doctor's “Call next” is refused because
    nobody waiting would be finished in time; the waiting-room display shows the ambulance band. Press *Arrived*:
    the patient goes straight into the held room.
-7. **Waiting-room display** (`/board`) and **the patient's view** from step 1: tokens and ranges, no names, and the
-   reasons for the patient's place in the queue.
+7. **Waiting-room display** (`/board`) and **the patient's phone**: open `/patient` on a phone and pick the demo
+   patient marked *may step away*. Press *I feel worse* (chest pain): the triage desk shows the red *Patients asking
+   for help* panel; press *Checked, no change* and the phone says a nurse checked. *Step away* for 10 minutes: the
+   queue tags them *away till …* and the TV tile turns dashed. Then sign in as *Next in line*, and on the doctor console
+   press *Call next patient*: the phone turns into a blue “Please go to Room 3” sign.
 8. **Reports** (log in as `admin`): scheduler comparison (fixed vs risk-adaptive aging), the new section with the
    risk-threshold sweep and the pre-alert trade-off, model accuracy, and *Run test again* for the concurrency test
    (no lock → double assignments, with lock → 0).
@@ -128,5 +133,5 @@ seed.py           demo data, timestamps relative to "now"
 schema.sql        tables, constraints, indexes, queue view
 ai/               dataset generator, training, runtime models, wait-time model
 templates/ public/static/  the user interface (public/ is served by the Vercel CDN)
-tests/            20 end-to-end tests
+tests/            26 end-to-end tests
 ```
