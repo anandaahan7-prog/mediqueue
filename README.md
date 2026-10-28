@@ -127,6 +127,6 @@ simulate.py       40 simulated shifts: FCFS vs SJF vs priority vs MediQueue (fix
 seed.py           demo data, timestamps relative to "now"
 schema.sql        tables, constraints, indexes, queue view
 ai/               dataset generator, training, runtime models, wait-time model
-templates/ static/  the user interface
+templates/ public/static/  the user interface (public/ is served by the Vercel CDN)
 tests/            20 end-to-end tests
 ```

@@ -21,6 +21,7 @@ const ICONS = {
   alert: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>',
   pause: '<path d="M9 5v14M15 5v14"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>',
+  check: '<path d="M5 12l5 5 9-10"/>',
   ambulance: '<path d="M2.5 6.5h11v10h-11zM13.5 10h4.2l3.3 3.4v3.1h-7.5"/><circle cx="6.5" cy="17.5" r="1.9"/><circle cx="17" cy="17.5" r="1.9"/><path d="M8 8.8v4.4M5.8 11h4.4"/>',
 };
 const icon = (name, cls = 'ico') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -121,10 +122,68 @@ function setOnline(ok) {
   else tickClock();
 }
 
-function poll(fn, every = 5000) {
-  const run = () => fn().then(() => setOnline(true)).catch(err => { console.warn('refresh failed', err); setOnline(false); });
+// Every live screen refreshes itself. A refresh never overlaps the previous one, pauses while the
+// tab is hidden, and runs at once when the tab comes back or after the user presses a button.
+const refreshers = [];
+function poll(fn, every = 2500) {
+  let running = null;
+  const run = () => {
+    if (!running) {
+      running = fn().then(() => setOnline(true))
+        .catch(err => { console.warn('refresh failed', err); setOnline(false); })
+        .finally(() => { running = null; });
+    }
+    return running;
+  };
+  refreshers.push(run);
   run();
-  return setInterval(run, every);
+  return setInterval(() => { if (!document.hidden) run(); }, every);
+}
+const refreshNow = () => Promise.all(refreshers.map(run => run()));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshNow(); });
+window.addEventListener('focus', () => refreshNow());
+
+// short confirmation after an action, in the same place and style as a server flash message
+function toast(message, category = 'success') {
+  const host = $('.pages');
+  if (!host || !message) return;
+  $$('.flash.toast', host).forEach(el => el.remove());
+  const el = document.createElement('div');
+  const kind = category === 'error' ? 'danger' : category === 'info' ? 'info' : '';
+  el.className = `callout flash toast ${kind}`;
+  el.setAttribute('role', category === 'error' ? 'alert' : 'status');
+  el.innerHTML = `${icon(category === 'error' ? 'alert' : category === 'info' ? 'info' : 'check', '')}<span>${escapeHtml(message)}</span>`;
+  host.prepend(el);
+  setTimeout(() => { el.classList.add('fade'); setTimeout(() => el.remove(), 450); }, 5000);
+}
+
+// buttons on live screens (Call next, Discharge, Mark clean, Arrived...) post in the background:
+// no redirect and page reload, just the server's answer and an immediate redraw
+async function sendAction(form, btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    btn.classList.add('is-loading');
+  }
+  try {
+    const res = await fetch(form.action, {
+      method: 'POST', body: new FormData(form), credentials: 'same-origin', headers: { 'X-Requested-With': 'fetch' },
+    });
+    if (!res.ok || !(res.headers.get('content-type') || '').includes('json')) throw new Error(`HTTP ${res.status}`);
+    const answer = await res.json();
+    toast(answer.message, answer.category);
+    await refreshNow();
+  } catch (err) {
+    console.warn('falling back to a normal form post', err);
+    HTMLFormElement.prototype.submit.call(form);  // e.g. the session expired: let the server redirect
+    return;
+  } finally {
+    if (btn && btn.isConnected) {
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      btn.classList.remove('is-loading');
+    }
+  }
 }
 
 function postButton(action, label, cls = 'btn btn-sm', { confirm = '', aria = '', fields = {} } = {}) {
@@ -228,6 +287,11 @@ function renderDoors(el, doctors, me = null) {
     const form = e.target;
     if (e.defaultPrevented || (form.method || '').toLowerCase() !== 'post') return;
     const btn = e.submitter || $('button[type="submit"], button:not([type])', form);
+    if (form.classList.contains('inline-form') && window.fetch && refreshers.length) {
+      e.preventDefault();
+      sendAction(form, btn);
+      return;
+    }
     if (!btn) return;
     setTimeout(() => {
       btn.disabled = true;
@@ -616,7 +680,7 @@ function initBoard() {
       <div class="waiting-tile ${w.urgent ? 'urgent' : ''}"><b>${w.token}</b>
         <span>${w.urgent ? 'Next' : w.eta_range ? `about ${w.eta_range[0]}–${w.eta_range[1]} min` : 'Please wait'}</span></div>`).join('')
       || '<p class="board-empty">Nobody is waiting.</p>');
-  }, 5000);
+  }, 4000);
 }
 
 // ---------------------------------------------------------------- the patient's own page

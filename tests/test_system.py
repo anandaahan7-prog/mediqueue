@@ -87,6 +87,15 @@ class MediQueueTests(unittest.TestCase):
         got = self.db.execute("SELECT visit_id FROM visits WHERE doctor_id = 5 AND status = 'in_consult'").fetchone()
         self.assertEqual(got["visit_id"], head)
 
+    def test_buttons_answer_background_requests(self):
+        c = client_as("iyer")
+        r = c.post("/doctor/call-next", headers={"X-Requested-With": "fetch"})
+        self.assertEqual(r.status_code, 200)  # JSON, not a redirect and a page reload
+        self.assertIn("Please call token", r.get_json()["message"])
+        r = client_as("admin").post("/beds/6/clean", headers={"X-Requested-With": "fetch"})
+        self.assertEqual(r.get_json()["category"], "success")
+        self.assertEqual(c.post("/doctor/discharge").status_code, 302)  # a plain form post still redirects
+
     def test_cannot_call_twice(self):
         c = client_as("iyer")
         c.post("/doctor/call-next")

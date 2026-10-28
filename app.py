@@ -7,6 +7,7 @@ MediQueue - AI-assisted emergency department queue.
 Logins (password demo123): nurse priya, doctors rao / mehta / iyer / khan, admin admin
 """
 
+import hashlib
 import io
 import json
 import os
@@ -32,7 +33,9 @@ BASE = Path(__file__).resolve().parent
 # results written at runtime (the concurrency test) must go to a writable folder on Vercel
 RESULTS_DIR = Path("/tmp") if os.environ.get("VERCEL") else BASE / "models"
 
-app = Flask(__name__)
+# Static files live in public/static: on Vercel everything under public/ is served by the CDN,
+# so the CSS, JavaScript and fonts never wake up (or multiply) the Python function.
+app = Flask(__name__, static_folder="public/static", static_url_path="/static")
 app.secret_key = os.environ.get("SECRET_KEY", "mediqueue-dev-secret-change-me")
 
 
@@ -45,6 +48,40 @@ def ensure_database():
 
 
 ensure_database()
+wait_model.predict([[0] * 8])  # load the models now, not on the first poll after a cold start
+
+def asset_version():
+    """Changes whenever the CSS/JS change, so the CDN and browsers can cache static files for a year.
+    On Vercel the public/ folder goes to the CDN and is not in the function bundle, so there the
+    deployment id (new on every deploy) does the same job."""
+    try:
+        return hashlib.sha1(b"".join((BASE / "public/static" / f).read_bytes()
+                                     for f in ("app.css", "app.js", "charts.js"))).hexdigest()[:10]
+    except OSError:
+        return (os.environ.get("VERCEL_DEPLOYMENT_ID") or os.environ.get("VERCEL_GIT_COMMIT_SHA") or "1")[-10:]
+
+
+ASSET_VERSION = asset_version()
+
+
+@app.url_defaults
+def versioned_static(endpoint, values):
+    if endpoint == "static":
+        values.setdefault("v", ASSET_VERSION)
+
+
+def wants_json():
+    """Buttons on live screens post with fetch() and only need a short answer, not a redirect."""
+    return request.headers.get("X-Requested-With") == "fetch"
+
+
+def reply(message, category, url):
+    """Answer an action: JSON for fetch(), otherwise flash + redirect (works without JavaScript)."""
+    if wants_json():
+        return jsonify({"message": message, "category": category})
+    if message:
+        flash(message, category)
+    return redirect(url)
 
 # each server process gets an id; handy for seeing which Vercel instance answered a request
 INSTANCE_ID = os.urandom(4).hex()
@@ -451,14 +488,12 @@ def prealert_action(alert_id, action):
         a = conn.execute("SELECT * FROM prealerts WHERE alert_id = ? AND status = 'incoming'", (alert_id,)).fetchone()
         if a is None:
             conn.execute("COMMIT")
-            flash("That ambulance is no longer expected.", "error")
-            return redirect(back)
+            return reply("That ambulance is no longer expected.", "error", back)
         if action == "cancel":
             conn.execute("UPDATE prealerts SET status = 'cancelled', doctor_id = NULL WHERE alert_id = ?", (alert_id,))
             log_event(conn, "prealert", f"ambulance {a['code']} cancelled", None, g.user["user_id"])
             conn.execute("COMMIT")
-            flash(f"Pre-alert {a['code']} cancelled; any held room is free again.", "info")
-            return redirect(back)
+            return reply(f"Pre-alert {a['code']} cancelled; any held room is free again.", "info", back)
         v = {k: a[k] for k in ("age", "complaint", *VITAL_FIELDS)}
         ai = {"esi": a["ai_esi"], "confidence": a["ai_confidence"], "probs": triage_model.probabilities(v)}
         visit_id, token = new_visit(conn, v, ai, a["esi"], a["override_reason"], a["predicted_minutes"],
@@ -472,10 +507,8 @@ def prealert_action(alert_id, action):
         conn.execute("ROLLBACK")
         raise
     if straight_in:
-        flash(f"Ambulance {a['code']} arrived as {token} and went straight to {room['room']}.", "success")
-    else:
-        flash(f"Ambulance {a['code']} arrived as {token}; it is at the front of the queue.", "success")
-    return redirect(back)
+        return reply(f"Ambulance {a['code']} arrived as {token} and went straight to {room['room']}.", "success", back)
+    return reply(f"Ambulance {a['code']} arrived as {token}; it is at the front of the queue.", "success", back)
 
 
 @app.route("/visits/<int:visit_id>/retriage", methods=["POST"])
@@ -514,7 +547,8 @@ def left_without_seen(visit_id):
     if cur.rowcount:
         log_event(conn, "left", "left without being seen", visit_id, g.user["user_id"])
     conn.execute("COMMIT")
-    return redirect(url_for("triage"))
+    return reply("Marked as left without being seen." if cur.rowcount else "That patient is no longer waiting.",
+                 "info" if cur.rowcount else "error", url_for("triage"))
 
 
 # ---------------------------------------------------------------- doctor console
@@ -560,28 +594,27 @@ def doctor_duty():
 def doctor_action(action):
     conn = get_db()
     me = g.user["user_id"]
+    back = url_for("doctor")
     try:
         if action == "call-next":
             try:
                 visit_id = dispatch.call_next(conn, me)
             except dispatch.RoomHeld as held:
-                flash(str(held), "info")
-                return redirect(url_for("doctor"))
+                return reply(str(held), "info", back)
             if visit_id is None:
-                flash("Nobody is waiting right now.", "info")
-            else:
-                token = conn.execute("SELECT token FROM visits WHERE visit_id = ?", (visit_id,)).fetchone()[0]
-                flash(f"Please call token {token} to {g.user['room']}.", "success")
-        elif action == "preempt":
+                return reply("Nobody is waiting right now.", "info", back)
+            token = conn.execute("SELECT token FROM visits WHERE visit_id = ?", (visit_id,)).fetchone()[0]
+            return reply(f"Please call token {token} to {g.user['room']}.", "success", back)
+        if action == "preempt":
             visit_id = dispatch.preempt_for_critical(conn, me)
             token = conn.execute("SELECT token FROM visits WHERE visit_id = ?", (visit_id,)).fetchone()[0]
-            flash(f"Current patient paused and kept at the front of their level. Attend {token} now.", "error")
-        elif action in ("discharge", "admit"):
+            return reply(f"Current patient paused and kept at the front of their level. Attend {token} now.", "error", back)
+        if action in ("discharge", "admit"):
             msg = dispatch.finish(conn, me, "admit" if action == "admit" else "discharged")
-            flash(f"Patient {msg}.", "success")
+            return reply(f"Patient {msg}.", "success", back)
     except dispatch.DispatchError as e:
-        flash(str(e), "error")
-    return redirect(url_for("doctor"))
+        return reply(str(e), "error", back)
+    return reply("Unknown action.", "error", back)
 
 
 # ---------------------------------------------------------------- beds
@@ -596,14 +629,18 @@ def bed_board():
 @login_required()
 def bed_action(bed_id, action):
     conn = get_db()
+    label = conn.execute("SELECT label FROM beds WHERE bed_id = ?", (bed_id,)).fetchone()
+    label = label["label"] if label else "Bed"
     if action == "release":
         beds.release_bed(conn, bed_id, g.user["user_id"])
-    elif action == "clean":
+        return reply(f"{label} released; it goes to cleaning.", "info", url_for("bed_board"))
+    if action == "clean":
         got = beds.signal_bed(conn, bed_id, g.user["user_id"])
         if got:
             token = conn.execute("SELECT token FROM visits WHERE visit_id = ?", (got,)).fetchone()[0]
-            flash(f"Bed given straight to boarding patient {token}.", "success")
-    return redirect(url_for("bed_board"))
+            return reply(f"{label} is clean and went straight to boarding patient {token}.", "success", url_for("bed_board"))
+        return reply(f"{label} is clean and free again.", "success", url_for("bed_board"))
+    return reply("Unknown action.", "error", url_for("bed_board"))
 
 
 # ---------------------------------------------------------------- waiting room display (no login, no names)

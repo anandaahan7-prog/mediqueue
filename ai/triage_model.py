@@ -132,7 +132,7 @@ def predict_minutes(vitals, esi):
     return int(round(model.predict([to_vector(vitals) + [esi]])[0]))
 
 
-def suggest(vitals):
+def suggest(vitals, with_reasons=True):
     probs = probabilities(vitals)
     model_level = int(np.argmax(probs)) + 1
     level = apply_safety(probs)
@@ -148,5 +148,5 @@ def suggest(vitals):
         "confidence": round(float(probs[level - 1]), 3),
         "news2": news2(vitals),
         "minutes": predict_minutes(vitals, level),
-        "reasons": explain(vitals, probs),
+        "reasons": explain(vitals, probs) if with_reasons else [],
     }

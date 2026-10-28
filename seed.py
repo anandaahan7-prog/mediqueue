@@ -39,7 +39,7 @@ NAMES = ["Aarav Shah", "Diya Kulkarni", "Kabir Singh", "Ananya Rao", "Rohan Das"
 def insert_visit(conn, rng, name, arrived, status, vitals=None, complaint=None, final_esi=None, override=None,
                  doctor=None, started=None, finished=None, seen=None, nurse=1):
     v = vitals or sample_patient(rng, complaint)
-    ai = triage_model.suggest(v)
+    ai = triage_model.suggest(v, with_reasons=False)  # explanations are only shown live, never stored
     esi = final_esi or ai["esi"]
     minutes = ai["minutes"] if esi == ai["esi"] else triage_model.predict_minutes(v, esi)
     sex = "F" if name.split()[0] in {"Diya", "Ananya", "Meera", "Isha", "Sana", "Neha", "Tara", "Pooja", "Nisha",
