@@ -27,6 +27,8 @@
       {% if me.role in ('nurse', 'admin') %}
       <a href="{{ url_for('triage') }}" {% if page == 'triage' %}class="active" aria-current="page"{% endif %}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6v4H9zM5 5h4M15 5h4v16H5V5"/><path d="M9 13h6M12 10v6"/></svg> Triage desk <span class="nav-count" id="nav-waiting" title="Patients waiting"></span></a>
+      <a href="{{ url_for('prealert') }}" {% if page == 'prealert' %}class="active" aria-current="page"{% endif %}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 6.5h11v10h-11zM13.5 10h4.2l3.3 3.4v3.1h-7.5"/><circle cx="6.5" cy="17.5" r="1.9"/><circle cx="17" cy="17.5" r="1.9"/><path d="M8 8.8v4.4M5.8 11h4.4"/></svg> Ambulances <span class="nav-count" id="nav-incoming" title="Ambulances on the way"></span></a>
       {% endif %}
       {% if me.role == 'doctor' %}
       <a href="{{ url_for('doctor') }}" {% if page == 'doctor' %}class="active" aria-current="page"{% endif %}>
@@ -71,6 +73,7 @@
         {% for cat, msg in messages %}
           <div class="callout flash {{ 'danger' if cat == 'error' else 'info' if cat == 'info' else '' }}" role="{{ 'alert' if cat == 'error' else 'status' }}">
             {% if cat == 'error' %}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg>
+            {% elif cat == 'info' %}<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
             {% else %}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>{% endif %}
             <span>{{ msg }}</span>
           </div>

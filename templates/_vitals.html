@@ -1,0 +1,15 @@
+{# the nine model inputs; shared by the triage desk, re-triage and the ambulance pre-alert #}
+{% set r = retriage if retriage is defined else none %}
+<div class="form-grid" id="vitals">
+  <div class="field"><label for="f-age">Age</label><input id="f-age" name="age" type="number" inputmode="numeric" min="0" max="120" required value="{{ r.age if r else '' }}"><small>years</small></div>
+  <div class="field" data-range="60,100"><label for="f-hr">Heart rate</label><input id="f-hr" name="heart_rate" type="number" inputmode="numeric" min="20" max="250" required value="{{ r.heart_rate if r else '' }}" aria-describedby="h-hr"><small id="h-hr">bpm · normal 60–100</small></div>
+  <div class="field" data-range="100,140"><label for="f-bp">Systolic BP</label><input id="f-bp" name="systolic_bp" type="number" inputmode="numeric" min="40" max="260" required value="{{ r.systolic_bp if r else '' }}" aria-describedby="h-bp"><small id="h-bp">mmHg · normal 100–140</small></div>
+  <div class="field" data-range="12,20"><label for="f-rr">Resp. rate</label><input id="f-rr" name="resp_rate" type="number" inputmode="numeric" min="4" max="60" required value="{{ r.resp_rate if r else '' }}" aria-describedby="h-rr"><small id="h-rr">per min · normal 12–20</small></div>
+  <div class="field" data-range="95,100"><label for="f-spo2">SpO₂</label><input id="f-spo2" name="spo2" type="number" inputmode="numeric" min="50" max="100" required value="{{ r.spo2 if r else '' }}" aria-describedby="h-spo2"><small id="h-spo2">% · normal 95 or more</small></div>
+  <div class="field" data-range="36.1,37.9"><label for="f-temp">Temperature</label><input id="f-temp" name="temperature" type="number" inputmode="decimal" step="0.1" min="30" max="44" required value="{{ r.temperature if r else '' }}" aria-describedby="h-temp"><small id="h-temp">°C · normal 36.1–37.9</small></div>
+  <div class="field" data-range="0,3"><label for="f-pain">Pain <span id="pain-val"></span></label><input id="f-pain" name="pain" type="range" min="0" max="10" value="{{ r.pain if r else 2 }}" aria-describedby="h-pain"><small id="h-pain">0 none – 10 worst</small></div>
+  <div class="field" data-range="0,0"><label for="f-avpu">Consciousness (AVPU)</label>
+    <select id="f-avpu" name="consciousness">{% for c in consciousness_levels %}<option value="{{ loop.index0 }}" {{ 'selected' if r and r.consciousness == loop.index0 }}>{{ c }}</option>{% endfor %}</select></div>
+  <div class="field span-2"><label for="f-complaint">Chief complaint</label>
+    <select id="f-complaint" name="complaint">{% for key, label in complaints.items() %}<option value="{{ key }}" {{ 'selected' if r and r.complaint == key }}>{{ label }}</option>{% endfor %}</select></div>
+</div>

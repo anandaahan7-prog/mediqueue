@@ -4,6 +4,7 @@ PRAGMA foreign_keys = ON;
 DROP VIEW IF EXISTS v_queue;
 DROP VIEW IF EXISTS v_today_stats;
 DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS prealerts;
 DROP TABLE IF EXISTS beds;
 DROP TABLE IF EXISTS visits;
 DROP TABLE IF EXISTS patients;
@@ -48,7 +49,11 @@ CREATE TABLE visits (
     ai_confidence      REAL,
     esi                INTEGER NOT NULL CHECK (esi BETWEEN 1 AND 5),   -- final level, nurse can override
     override_reason    TEXT,
+    ai_risk            REAL NOT NULL DEFAULT 0,  -- AI probability an ESI 3-5 patient is really ESI 1-2 (drives aging)
     predicted_minutes  INTEGER NOT NULL,
+    public_code        TEXT UNIQUE,              -- secret part of the patient's "why am I waiting?" link
+    ambulance          INTEGER NOT NULL DEFAULT 0 CHECK (ambulance IN (0, 1)),
+    reserved_for       INTEGER REFERENCES users(user_id),  -- doctor who held a room for this ambulance
     status             TEXT NOT NULL DEFAULT 'waiting'
                        CHECK (status IN ('waiting', 'in_consult', 'boarding', 'admitted', 'discharged', 'left')),
     doctor_id          INTEGER REFERENCES users(user_id),
@@ -67,6 +72,36 @@ CREATE TABLE beds (
     status     TEXT NOT NULL DEFAULT 'free' CHECK (status IN ('free', 'occupied', 'cleaning')),
     visit_id   INTEGER UNIQUE REFERENCES visits(visit_id),   -- UNIQUE: one patient can never hold two beds
     updated_at TEXT
+);
+
+-- ambulance pre-alerts: triaged before arrival, a doctor's room is held until the ETA
+CREATE TABLE prealerts (
+    alert_id          INTEGER PRIMARY KEY,
+    code              TEXT NOT NULL UNIQUE,      -- A01, A02, ...
+    created_at        TEXT NOT NULL,
+    eta_at            TEXT NOT NULL,
+    patient_name      TEXT,
+    age               INTEGER NOT NULL CHECK (age BETWEEN 0 AND 120),
+    sex               TEXT NOT NULL CHECK (sex IN ('M', 'F', 'O')),
+    complaint         TEXT NOT NULL,
+    notes             TEXT,
+    heart_rate        INTEGER NOT NULL,
+    systolic_bp       INTEGER NOT NULL,
+    resp_rate         INTEGER NOT NULL,
+    spo2              INTEGER NOT NULL,
+    temperature       REAL NOT NULL,
+    consciousness     INTEGER NOT NULL,
+    pain              INTEGER NOT NULL,
+    ai_esi            INTEGER NOT NULL,
+    ai_confidence     REAL,
+    esi               INTEGER NOT NULL,
+    override_reason   TEXT,
+    ai_risk           REAL NOT NULL DEFAULT 0,
+    predicted_minutes INTEGER NOT NULL,
+    doctor_id         INTEGER REFERENCES users(user_id),  -- whose room is held (ESI 1-2 only)
+    status            TEXT NOT NULL DEFAULT 'incoming' CHECK (status IN ('incoming', 'arrived', 'cancelled')),
+    visit_id          INTEGER REFERENCES visits(visit_id),
+    created_by        INTEGER REFERENCES users(user_id)
 );
 
 -- audit trail of every scheduling / bed decision

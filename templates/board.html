@@ -17,6 +17,7 @@
     </div>
     <div class="board-clock" id="board-clock" aria-hidden="true">--:--</div>
   </header>
+  <div class="incoming-strip hidden" id="incoming-strip" aria-live="polite"></div>
   <main class="board-main">
     <section aria-labelledby="now-title">
       <h2 id="now-title">Now being seen</h2>
@@ -27,7 +28,7 @@
       <div id="waiting" class="waiting-grid"></div>
     </section>
   </main>
-  <footer class="board-foot">Times are estimates and can change if a more urgent patient arrives. If you feel worse while waiting, tell the nurse at the desk straight away.</footer>
+  <footer class="board-foot">Times are estimates and can change if a more urgent patient arrives. Scan the code on your token slip to see your own place in the queue and why it changes. If you feel worse while waiting, tell the nurse at the desk straight away.</footer>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

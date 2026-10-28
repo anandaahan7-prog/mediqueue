@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Ambulance pre-alert{% endblock %}
+{% block heading %}Ambulance pre-alert{% endblock %}
+{% block subheading %}Triage the patient while the ambulance is on its way. For ESI 1–2 the dispatcher holds the room of the doctor who will be free closest to the arrival time.{% endblock %}
+{% block content %}
+<section class="panel" aria-labelledby="incoming-title">
+  <div class="panel-head">
+    <div><h2 id="incoming-title">Incoming ambulances</h2><p class="hint" id="hold-note">Loading…</p></div>
+  </div>
+  <div id="incoming" class="list"><div class="skeleton" aria-hidden="true"><i style="height:48px"></i></div></div>
+</section>
+
+<form method="post" id="triage-form" action="{{ url_for('prealert_submit') }}">
+  <div class="split">
+    <section class="panel" aria-labelledby="form-title">
+      <div class="panel-head">
+        <h2 id="form-title">Call from the ambulance</h2>
+        <button type="button" class="btn btn-sm" id="fill-example">Fill an example call</button>
+      </div>
+      <div class="form-grid" style="margin-bottom:14px">
+        <div class="field span-2"><label for="f-name">Name, if known</label><input id="f-name" name="name" autocomplete="off" placeholder="Unknown"></div>
+        <div class="field"><label for="f-sex">Sex</label>
+          <select id="f-sex" name="sex"><option value="M">Male</option><option value="F">Female</option><option value="O">Not known</option></select></div>
+        <div class="field"><label for="f-eta">Arriving in</label><input id="f-eta" name="eta_minutes" type="number" inputmode="numeric" min="1" max="90" required value="8" aria-describedby="h-eta"><small id="h-eta">minutes, from the crew</small></div>
+      </div>
+      {% include "_vitals.html" %}
+      <div class="field" style="margin-top:14px"><label for="f-notes">Notes from the crew</label><textarea id="f-notes" name="notes" rows="2" placeholder="What happened, treatment given on the way"></textarea></div>
+    </section>
+    {% with submit_label="Send pre-alert", cancel_url=none %}{% include "_ai_panel.html" %}{% endwith %}
+  </div>
+</form>
+
+<section class="panel" aria-labelledby="how-title">
+  <div class="panel-head"><h2 id="how-title">How a held room works</h2></div>
+  <p class="prose">The room held is the one whose doctor is predicted to be free closest to, but before, the arrival time, so it stands empty for the shortest time.
+    Until the ambulance arrives that doctor can still call patients, but “Call next” only gives them someone whose predicted consultation ends before the ambulance does.
+    When you press “Arrived”, the patient gets a token and goes straight into the held room. ESI 3–5 ambulances get no held room; they join the queue on arrival.</p>
+</section>
+{% endblock %}

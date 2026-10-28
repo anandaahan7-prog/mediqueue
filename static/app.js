@@ -21,12 +21,19 @@ const ICONS = {
   alert: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>',
   pause: '<path d="M9 5v14M15 5v14"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>',
+  ambulance: '<path d="M2.5 6.5h11v10h-11zM13.5 10h4.2l3.3 3.4v3.1h-7.5"/><circle cx="6.5" cy="17.5" r="1.9"/><circle cx="17" cy="17.5" r="1.9"/><path d="M8 8.8v4.4M5.8 11h4.4"/>',
 };
 const icon = (name, cls = 'ico') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
 // aging: a low-priority patient who has waited long enough is treated as a more urgent level
 const agedTag = q => q.effective < q.esi
   ? `<span class="tag aged" title="Waited long enough to move up from ESI ${q.esi}">${icon('up')}now ${q.effective}</span>` : '';
+
+// risk-adaptive aging: the AI thinks this ESI 3-5 patient may really be an emergency
+const riskTag = q => q.high_risk
+  ? `<span class="tag risk" title="The AI gives a ${pct(q.risk)} chance this is really an emergency (ESI 1–2), so they move up every ${q.aging_every} min and can reach level 2">risk ${pct(q.risk)}</span>` : '';
+const ambulanceTag = q => (q.ambulance ? `<span class="tag amb">${icon('ambulance')}ambulance</span>` : '');
+const etaWords = m => (m > 0 ? `in ${m} min` : m === 0 ? 'due now' : `${-m} min late`);
 
 // every override carries its signed delta against the AI
 function deltaTag(q) {
@@ -120,10 +127,11 @@ function poll(fn, every = 5000) {
   return setInterval(run, every);
 }
 
-function postButton(action, label, cls = 'btn btn-sm', { confirm = '', aria = '' } = {}) {
+function postButton(action, label, cls = 'btn btn-sm', { confirm = '', aria = '', fields = {} } = {}) {
   const onsubmit = confirm ? ` onsubmit="return confirm('${confirm.replace(/'/g, '&#39;')}')"` : '';
   const ariaAttr = aria ? ` aria-label="${escapeHtml(aria)}"` : '';
-  return `<form method="post" action="${action}" class="inline-form"${onsubmit}><button type="submit" class="${cls}"${ariaAttr}>${label}</button></form>`;
+  const hidden = Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(v)}">`).join('');
+  return `<form method="post" action="${action}" class="inline-form"${onsubmit}>${hidden}<button type="submit" class="${cls}"${ariaAttr}>${label}</button></form>`;
 }
 
 // the department runs on Indian Standard Time whatever the viewer's machine is set to
@@ -139,6 +147,8 @@ function tickClock() {
 // live counts in the navigation: patients waiting, and the bed semaphore's value
 function updateNav(s) {
   $$('#nav-waiting').forEach(el => { el.textContent = s.queue.length; });
+  const amb = $('#nav-incoming');
+  if (amb) amb.textContent = s.incoming.length || '';
   const beds = $('#nav-beds');
   if (beds) beds.textContent = `${s.semaphore}/${s.beds.length}`;
 }
@@ -149,7 +159,9 @@ function updateNav(s) {
 const roomNo = room => (String(room).match(/\d+/) || [room])[0];
 const doorPos = d => (!d.on_duty ? 2 : d.current ? 0 : 1);
 const doorText = d => (!d.on_duty ? 'Off duty'
-  : d.current ? `With <b>${d.current.token}</b> · ESI ${d.current.esi} · ${d.current.done} min` : 'Free · the next call goes here');
+  : d.held && !d.current ? `Held for ambulance <b>${d.held.code}</b> · ${etaWords(d.held.eta_min)}`
+  : d.current ? `With <b>${d.current.token}</b> · ESI ${d.current.esi} · ${d.current.done} min${d.held ? ` · then <b>${d.held.code}</b>` : ''}`
+  : 'Free · the next call goes here');
 const sliderHTML = (labels = ['Busy', 'Free', 'Off']) =>
   `<span class="slider" aria-hidden="true"><span class="slider-thumb"></span>${labels.map(l => `<span>${l}</span>`).join('')}</span>`;
 
@@ -175,6 +187,7 @@ function renderDoors(el, doctors, me = null) {
     }
     const pos = doorPos(d);
     setSlider($('.slider', door), pos, pos === 0 ? 'busy' : pos === 2 ? 'idle' : '');
+    door.classList.toggle('held', Boolean(d.held));
     setHTML($('.door-sub', door), doorText(d));
     door.setAttribute('aria-label', `${d.room}, ${d.name}: ${doorText(d).replace(/<[^>]+>/g, '')}`);
   });
@@ -347,6 +360,12 @@ function initTriage() {
       { name: 'Mohd. Arif', age: 19, heart_rate: 128, systolic_bp: 108, resp_rate: 34, spo2: 86, temperature: 37.2, pain: 4, consciousness: 1, complaint: 'breathing', sex: 'M', notes: 'Known asthmatic, cannot finish sentences' },
       { name: 'Kamala Devi', age: 72, heart_rate: 92, systolic_bp: 188, resp_rate: 18, spo2: 95, temperature: 36.9, pain: 2, consciousness: 1, complaint: 'stroke', sex: 'F', notes: 'Slurred speech since 1 hour' },
     ];
+    if (document.body.dataset.page === 'prealert') {
+      examples.splice(0, examples.length,
+        { name: '', age: 63, heart_rate: 118, systolic_bp: 96, resp_rate: 26, spo2: 91, temperature: 37.0, pain: 8, consciousness: 0, complaint: 'chest', sex: 'M', eta_minutes: 8, notes: 'Chest pain at home 40 min, aspirin given by crew' },
+        { name: 'Unknown', age: 30, heart_rate: 124, systolic_bp: 102, resp_rate: 24, spo2: 95, temperature: 36.7, pain: 9, consciousness: 0, complaint: 'trauma', sex: 'M', eta_minutes: 12, notes: 'Two-wheeler accident, open fracture left leg' },
+        { name: 'Savitri Patil', age: 71, heart_rate: 88, systolic_bp: 192, resp_rate: 18, spo2: 96, temperature: 36.8, pain: 1, consciousness: 1, complaint: 'stroke', sex: 'F', eta_minutes: 6, notes: 'Left-sided weakness, onset 50 min ago' });
+    }
     const ex = examples[Math.floor(Math.random() * examples.length)];
     Object.entries(ex).forEach(([k, v]) => { if (form.elements[k]) form.elements[k].value = v; });
     delete form.dataset.touched;
@@ -355,6 +374,27 @@ function initTriage() {
 
   preview();
   if (!isRetriage) poll(refreshQueueTable);
+}
+
+// ambulances on the way: countdown, held room, Arrived / Cancel
+function renderIncoming(s) {
+  const list = $('#incoming');
+  if (!list) return;
+  $('#incoming-panel')?.classList.toggle('hidden', !s.incoming.length);
+  const note = $('#hold-note');
+  if (note) {
+    setHTML(note, s.hold_rooms ? 'Rooms are held for ESI 1–2 ambulances. ESI 3–5 join the queue when they arrive.'
+      : 'Room holding is switched off in Reports &amp; settings: ambulances join the queue when they arrive.');
+  }
+  const back = location.pathname;
+  setHTML(list, s.incoming.map(a => `
+    <div class="list-item incoming-item ${a.eta_min < 0 ? 'is-late' : ''}"><span class="pos amb-ico">${icon('ambulance')}</span>
+      <div><div class="line1"><span class="token">${a.code}</span>${esiBadge(a.esi)}<span>${escapeHtml(a.complaint)} · ${a.age} ${SEX[a.sex] ?? ''}</span></div>
+        <div class="line2">${a.room ? `<b>${escapeHtml(a.room)}</b> is held · ${escapeHtml(a.doctor)}` : a.esi <= 2 ? 'No room held' : 'No room held: joins the queue on arrival'}</div></div>
+      <div class="right"><span class="eta">${etaWords(a.eta_min)}</span>
+        <div class="row-actions">${postButton(`/prealerts/${a.id}/arrived`, 'Arrived', 'btn btn-sm btn-primary', { aria: `Ambulance ${a.code} has arrived`, fields: { back } })}
+          <span class="gap" aria-hidden="true"></span>${postButton(`/prealerts/${a.id}/cancel`, 'Cancel', 'btn btn-sm btn-destructive', { confirm: `Cancel pre-alert ${a.code}? Any held room is freed.`, aria: `Cancel pre-alert ${a.code}`, fields: { back } })}</div></div>
+    </div>`).join('') || '<div class="empty"><strong>No ambulances on the way</strong><p>When a crew calls ahead, enter their vitals below and send a pre-alert.</p></div>');
 }
 
 // rows that moved up since the last refresh (aging, a re-triage) glow brass for a moment
@@ -375,7 +415,10 @@ async function refreshQueueTable() {
   const s = await getJSON('/api/state');
   updateNav(s);
   renderDoors($('#doors'), s.doctors);
-  setHTML($('#queue-sub'), `${s.queue.length} waiting · ESI 4–5 patients move up a level every ${s.aging} min, up to level 3`);
+  renderIncoming(s);
+  setHTML($('#queue-sub'), s.aging_mode === 'adaptive'
+    ? `${s.queue.length} waiting · risk-adaptive aging: every ${s.aging} min or sooner for patients the AI thinks may be an emergency`
+    : `${s.queue.length} waiting · fixed aging: ESI 3–5 move up a level every ${s.aging} min, up to level 3`);
   if (!s.queue.length) {
     setHTML($('#queue-table'), '<div class="empty"><strong>Nobody is waiting</strong><p>Patients appear here, in calling order, as soon as you issue a token.</p></div>');
     return;
@@ -389,7 +432,7 @@ async function refreshQueueTable() {
       return `<tr data-token="${q.token}" data-pos="${q.position}" class="${q.over_target ? 'is-late' : ''}">
       <td class="c-pos">${q.position}</td>
       <td class="c-token"><span class="token">${q.token}</span></td>
-      <td class="c-level"><div class="tags">${esiBadge(q.esi)}${agedTag(q)}${deltaTag(q)}</div></td>
+      <td class="c-level"><div class="tags">${esiBadge(q.esi)}${agedTag(q)}${riskTag(q)}${ambulanceTag(q)}${deltaTag(q)}</div></td>
       <td class="c-patient"><b>${escapeHtml(q.name)}</b><span>${q.age} ${SEX[q.sex] ?? ''} · ${escapeHtml(q.complaint)}</span></td>
       <td class="c-wait"><div class="wait-cell">${waitBar(q.waited, ESI_TARGET[q.esi], scale, q.over_target)}<span class="wait-num">${q.waited} min</span></div></td>
       <td class="c-eta num">${q.eta_range ? `${q.eta_range[0]}–${q.eta_range[1]} min` : '–'}</td>
@@ -439,6 +482,16 @@ function initDoctor() {
     } else {
       banner.classList.add('hidden');
       alarmKey = '';
+    }
+
+    // a room held for an incoming ambulance
+    const hold = $('#hold-banner');
+    if (hold && mine && mine.held && banner.classList.contains('hidden')) {
+      hold.classList.remove('hidden');
+      setHTML(hold, `${icon('ambulance', '')}<div style="flex:1"><strong>Room held · ambulance ${mine.held.code} (ESI ${mine.held.esi}) ${etaWords(mine.held.eta_min)}</strong>
+        <p>${patient ? 'When you finish, keep your room free for it.' : '“Call next patient” will only give you someone whose consultation should end before it arrives.'}</p></div>`);
+    } else if (hold) {
+      hold.classList.add('hidden');
     }
 
     const card = $('#current-card');
@@ -555,12 +608,48 @@ function initBoard() {
       $$('#calling .calling').forEach(el => { if (!calledBefore.has(el.dataset.token)) el.classList.add('just-called'); });
     }
     calledBefore = new Set(b.calling.map(c => c.token));
+    const strip = $('#incoming-strip');
+    strip.classList.toggle('hidden', !b.incoming.length);
+    setHTML(strip, b.incoming.map(a => `<p>${icon('ambulance')}<span>Ambulance arriving ${a.eta_min > 0 ? `in about ${a.eta_min} min` : 'now'}${a.room ? ` · ${escapeHtml(a.room)} is being kept free for it` : ''}</span></p>`).join(''));
     $('#waiting-count').textContent = `(${b.waiting.length})`;
     setHTML($('#waiting'), b.waiting.map(w => `
       <div class="waiting-tile ${w.urgent ? 'urgent' : ''}"><b>${w.token}</b>
         <span>${w.urgent ? 'Next' : w.eta_range ? `about ${w.eta_range[0]}–${w.eta_range[1]} min` : 'Please wait'}</span></div>`).join('')
       || '<p class="board-empty">Nobody is waiting.</p>');
   }, 5000);
+}
+
+// ---------------------------------------------------------------- the patient's own page
+const ordinal = n => `${n}${['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
+function initWait() {
+  const code = document.body.dataset.code;
+  if (!code) return;
+  const DONE = {
+    discharged: ['Your visit is complete', 'Take care. If you were given medicines or advice, follow it, and come back if you feel worse.'],
+    admitted: ['You have been admitted', 'You are in an observation bed. The ward team will look after you from here.'],
+    boarding: ['You are being admitted', 'The doctor has admitted you. You are waiting for an observation bed to be free.'],
+    left: ['This token is closed', 'If you still need care, please speak to the nurse at the desk.'],
+  };
+  poll(async () => {
+    const w = await getJSON(`/api/wait/${encodeURIComponent(code)}`);
+    const card = $('#wait-card');
+    const why = $('#wait-why-panel');
+    if (w.status === 'waiting') {
+      const aging = w.next_step_in ? `<p class="wait-aging">${icon('up')}Your priority goes up in about ${w.next_step_in} min (every ${w.aging_every} min while you wait).</p>` : '';
+      setHTML(card, `<p class="wait-token"><span class="token lg">${w.token}</span><span class="muted">arrived ${w.arrived}</span></p>
+        <h1 class="wait-h1">You are <b>${ordinal(w.position)}</b> in the queue</h1>
+        <p class="wait-eta">${w.eta_range ? `Expected wait about <b>${w.eta_range[0]}–${w.eta_range[1]} min</b>` : 'A doctor will call your token'} · waiting ${w.waited} min</p>${aging}`);
+      why.classList.remove('hidden');
+      setHTML($('#why'), w.reasons.map(r => `<li>${escapeHtml(r)}</li>`).join(''));
+    } else if (w.status === 'in_consult') {
+      setHTML(card, `<p class="wait-token"><span class="token lg">${w.token}</span></p><h1 class="wait-h1">Please go to <b>${escapeHtml(w.room || 'the consultation room')}</b></h1><p class="wait-eta">A doctor is ready to see you now.</p>`);
+      why.classList.add('hidden');
+    } else {
+      const [title, text] = DONE[w.status] || ['Thank you', ''];
+      setHTML(card, `<p class="wait-token"><span class="token lg">${w.token}</span></p><h1 class="wait-h1">${title}</h1><p class="wait-eta">${text}</p>`);
+      why.classList.add('hidden');
+    }
+  }, 10000);
 }
 
 // ---------------------------------------------------------------- admin reports
@@ -618,10 +707,11 @@ function initAdmin() {
 
     if (r.simulation) {
       const pol = Object.values(r.simulation.policies);
-      const names = pol.map(p => p.label.replace(' (token order)', '').replace(' (triage only)', '').replace(' (ours)', '').replace('Shortest predicted first', 'SJF'));
+      const names = pol.map(p => p.label.replace(' (token order)', '').replace(' (triage only)', '').replace('Shortest predicted first', 'SJF')
+        .replace('MediQueue, fixed aging', 'Fixed aging').replace('MediQueue, risk-adaptive (ours)', 'Adaptive'));
       const colors = pol.map(p => (p.label.includes('ours') ? 'var(--dado)' : 'var(--line-strong)'));
       const small = (values, decimals = 0) => Charts.bars({
-        categories: names, series: [{ name: '', color: 'var(--dado)', values }], width: 300, height: 220, decimals,
+        categories: names, series: [{ name: '', color: 'var(--dado)', values }], width: 340, height: 230, decimals,
       });
       $('#chart-critical').innerHTML = small(pol.map(p => p.critical_wait), 1);
       $('#chart-tail').innerHTML = small(pol.map(p => p.low_priority_p95));
@@ -634,9 +724,27 @@ function initAdmin() {
       $('#chart-aging-esi3').innerHTML = Charts.bars({ categories: cats, series: [{ name: '', color: 'var(--esi-3)', values: sweep.map(x => x.esi3_target * 100) }], width: 240, height: 200, decimals: 0 });
       // the interval we actually use stays solid, the others fade back
       ['#chart-aging-tail', '#chart-aging-esi3'].forEach(sel => $$(`${sel} rect`).forEach((rect, i) => { if (cats[i] !== '30') rect.style.opacity = 0.35; }));
+
+      const rs = r.simulation.risk_sweep;
+      if (rs && $('#chart-risk-hidden')) {
+        const th = rs.map(x => (x.threshold === null ? 'never' : `${Math.round(x.threshold * 100)}%`));
+        $('#chart-risk-hidden').innerHTML = Charts.bars({ categories: th, series: [{ name: '', color: 'var(--dado)', values: rs.map(x => x.hidden_wait) }], width: 260, height: 200, decimals: 0 });
+        $('#chart-risk-critical').innerHTML = Charts.bars({ categories: th, series: [{ name: '', color: 'var(--esi-2)', values: rs.map(x => x.critical_wait) }], width: 260, height: 200, decimals: 1 });
+        // the threshold we use stays solid
+        ['#chart-risk-hidden', '#chart-risk-critical'].forEach(sel => $$(`${sel} rect`).forEach((rect, i) => { if (th[i] !== '30%') rect.style.opacity = 0.35; }));
+      }
+      const pa = r.simulation.prealert;
+      if (pa && $('#chart-prealert')) {
+        $('#chart-prealert').innerHTML = Charts.bars({
+          categories: ['Ambulance door-to-doctor', 'Slowest 10% of ambulances', 'Everyone else'],
+          series: [{ name: 'No pre-alert', color: 'var(--line-strong)', values: [pa.off.ambulance_wait, pa.off.ambulance_p90, pa.off.others_wait] },
+                   { name: 'Room held', color: 'var(--enamel)', values: [pa.on.ambulance_wait, pa.on.ambulance_p90, pa.on.others_wait] }],
+          width: 520, height: 220, unit: '', decimals: 1,
+        });
+      }
     }
   });
 }
 
 // ---------------------------------------------------------------- router
-({ login: initLogin, triage: initTriage, doctor: initDoctor, beds: initBeds, board: initBoard, admin: initAdmin })[document.body.dataset.page]?.();
+({ login: initLogin, triage: initTriage, prealert: initTriage, doctor: initDoctor, beds: initBeds, board: initBoard, admin: initAdmin, wait: initWait })[document.body.dataset.page]?.();

@@ -14,16 +14,19 @@ import sys
 
 import numpy as np
 
+import scheduler
 from ai import wait_model
 from ai.dataset import clinical_esi, consult_minutes, sample_patient
 from ai.triage_model import MODEL_DIR, apply_safety, batch_minutes, batch_probabilities, red_flags
-from scheduler import AGING_MINUTES, TARGET_MINUTES, estimate_waits, pick_next, preemption_target
+from scheduler import (AGING_MINUTES, TARGET_MINUTES, estimate_waits, pick_before, pick_next, preemption_target,
+                       reserve_doctor, risk_of)
 
 POLICIES = {
     "fcfs": "FCFS (token order)",
     "sjf": "Shortest predicted first",
     "priority": "Priority (triage only)",
-    "mediqueue": "MediQueue (ours)",
+    "mediqueue_fixed": "MediQueue, fixed aging",
+    "mediqueue": "MediQueue, risk-adaptive (ours)",
 }
 
 # average arrivals per hour from 08:00 to 20:00 - a late-morning and an evening peak
@@ -51,6 +54,7 @@ def make_day(rng, scale=1.0):
             "id": i + 1,
             "arrived": arrivals[i],
             "esi": ai_esi[i],          # what the scheduler sees
+            "risk": risk_of(probs[i], ai_esi[i]),
             "true_esi": true_esi,      # what we judge it by
             "predicted": predicted[i],
             "actual": consult_minutes(v, true_esi, rng),
@@ -59,11 +63,17 @@ def make_day(rng, scale=1.0):
     return patients
 
 
-def simulate(patients, policy, doctors=4, aging_minutes=AGING_MINUTES, collect=False):
+def simulate(patients, policy, doctors=4, aging_minutes=AGING_MINUTES, collect=False, prealert=False):
     """Minute-by-minute replay. With collect=True it also records, for every arrival,
-    the plain schedule estimate and the wait-model features."""
+    the plain schedule estimate and the wait-model features.
+
+    prealert=True: patients flagged "ambulance" are announced "lead" minutes before they arrive.
+    The doctor predicted to be free first holds their room for them and meanwhile only takes
+    patients whose predicted consultation ends before the ambulance does (scheduler.pick_before)."""
     visits = [dict(p, consult_done=0, first_seen=None) for p in patients]
     incoming = list(reversed(visits))
+    alerts = sorted((v for v in visits if prealert and v.get("ambulance")), key=lambda v: v["arrived"] - v["lead"])
+    held = {}  # doctor -> ambulance patient their room is held for
     waiting, busy = [], {}
     preemptions = 0
     rows = {}
@@ -75,24 +85,45 @@ def simulate(patients, policy, doctors=4, aging_minutes=AGING_MINUTES, collect=F
             waiting.append(v)
             if collect:
                 busy_until = [t + max(1, b["predicted"] - b["consult_done"]) for b in busy.values()]
-                eta = estimate_waits(waiting, busy_until, doctors - len(busy), t, aging_minutes).get(v["id"], 0.0)
+                eta = estimate_waits(waiting, busy_until, doctors - len(busy), t, aging_minutes, policy).get(v["id"], 0.0)
                 recent = sum(1 for p in visits if t - 60 < p["arrived"] <= t)
                 rows[v["id"]] = wait_model.features(v, waiting, t, len(busy), doctors, recent, eta,
                                                     hour=8 + t / 60, aging_minutes=aging_minutes)
 
-        if policy == "mediqueue" and len(busy) == doctors:
+        # pre-alerts: hold the room of the doctor predicted to be free first
+        while alerts and alerts[0]["arrived"] - alerts[0]["lead"] <= t:
+            amb = alerts.pop(0)
+            free_at = {d: (t + max(1, busy[d]["predicted"] - busy[d]["consult_done"]) if d in busy else t)
+                       for d in range(doctors)}
+            doc = reserve_doctor(free_at, amb["arrived"], held)
+            if doc is not None:
+                held[doc] = amb
+
+        if policy.startswith("mediqueue") and len(busy) == doctors:
             doc = preemption_target(waiting, list(busy.items()))
             if doc is not None:
                 waiting.append(busy.pop(doc))
                 preemptions += 1
 
         for doc in range(doctors):
-            if doc not in busy and waiting:
+            if doc in busy or not waiting:
+                continue
+            amb = held.get(doc)
+            if amb is not None and amb in waiting:
+                nxt = amb  # the ambulance is here and its room is free
+            elif amb is not None and amb["first_seen"] is None and amb["arrived"] > t:
+                nxt = pick_before(waiting, t, amb["arrived"], policy, aging_minutes)
+                if nxt is None:
+                    continue  # nobody short enough: keep the room free
+            else:
                 nxt = pick_next(waiting, t, policy, aging_minutes)
-                waiting.remove(nxt)
-                if nxt["first_seen"] is None:
-                    nxt["first_seen"] = t
-                busy[doc] = nxt
+            waiting.remove(nxt)
+            for d, a in list(held.items()):
+                if a is nxt:
+                    del held[d]
+            if nxt["first_seen"] is None:
+                nxt["first_seen"] = t
+            busy[doc] = nxt
 
         t += 1.0
         for doc in list(busy):
@@ -104,22 +135,27 @@ def simulate(patients, policy, doctors=4, aging_minutes=AGING_MINUTES, collect=F
     return {"visits": visits, "preemptions": preemptions, "rows": rows}
 
 
-def compare_policies(days=40, doctors=4, seed=7, scale=1.0, aging_minutes=AGING_MINUTES):
+def compare_policies(days=40, doctors=4, seed=7, scale=1.0, aging_minutes=AGING_MINUTES, policies=POLICIES):
     rng = np.random.default_rng(seed)
-    acc = {name: {"by_esi": [[] for _ in range(5)], "hit": [[] for _ in range(5)], "all": [], "max": [], "pre": []}
-           for name in POLICIES}
+    acc = {name: {"by_esi": [[] for _ in range(5)], "hit": [[] for _ in range(5)], "all": [], "max": [], "pre": [],
+                  "hidden": [], "hidden_hit": []}
+           for name in policies}
 
     for _ in range(days):
         patients = make_day(rng, scale)
-        for policy in POLICIES:
+        for policy in policies:
             run = simulate(patients, policy, doctors, aging_minutes)
             a = acc[policy]
             waits = []
             for p in run["visits"]:
                 w = p["first_seen"] - p["arrived"]
                 waits.append(w)
+                on_time = w <= max(TARGET_MINUTES[p["true_esi"]], 1)
                 a["by_esi"][p["true_esi"] - 1].append(w)
-                a["hit"][p["true_esi"] - 1].append(w <= max(TARGET_MINUTES[p["true_esi"]], 1))
+                a["hit"][p["true_esi"] - 1].append(on_time)
+                if p["true_esi"] < p["esi"]:  # the AI under-triaged them: sicker than their level says
+                    a["hidden"].append(w)
+                    a["hidden_hit"].append(on_time)
             a["all"] += waits
             a["max"].append(max(waits) if waits else 0)
             a["pre"].append(run["preemptions"])
@@ -137,6 +173,9 @@ def compare_policies(days=40, doctors=4, seed=7, scale=1.0, aging_minutes=AGING_
             "max_wait": float(np.mean(a["max"])),
             "preemptions_per_day": float(np.mean(a["pre"])),
             "patients": len(a["all"]),
+            "hidden_urgent": len(a["hidden"]),
+            "hidden_urgent_wait": float(np.mean(a["hidden"])) if a["hidden"] else 0.0,
+            "hidden_urgent_on_time": float(np.mean(a["hidden_hit"])) if a["hidden_hit"] else 0.0,
         }
     return out
 
@@ -181,9 +220,61 @@ def aging_sweep(values=(5, 10, 15, 30, 60, None), days=25, seed=11):
     """How the aging interval trades critical-patient speed against low-priority fairness."""
     out = []
     for a in values:
-        m = compare_policies(days=days, seed=seed, aging_minutes=a or 10 ** 6)["mediqueue"]
+        m = compare_policies(days=days, seed=seed, aging_minutes=a or 10 ** 6,
+                             policies={"mediqueue_fixed": ""})["mediqueue_fixed"]
         out.append({"aging": a, "critical_wait": m["critical_wait"], "low_p95": m["low_priority_p95"],
                     "mean_wait": m["mean_wait"], "esi3_target": m["within_target"][2]})
+    return out
+
+
+def risk_sweep(values=(None, 0.4, 0.3, 0.25, 0.2), days=40, seed=7):
+    """Which risk lets a patient age past level 3 into level 2 (None = never; the interval still
+    shortens with risk). Judged on the patients the AI under-triaged, against what it costs the
+    critical patients and the low-priority tail."""
+    keep = scheduler.RISK_CAP_THRESHOLD
+    out = []
+    try:
+        for theta in values:
+            scheduler.RISK_CAP_THRESHOLD = theta
+            m = compare_policies(days=days, seed=seed, policies={"mediqueue": ""})["mediqueue"]
+            out.append({"threshold": theta, "hidden_wait": m["hidden_urgent_wait"],
+                        "hidden_on_time": m["hidden_urgent_on_time"], "critical_wait": m["critical_wait"],
+                        "low_p95": m["low_priority_p95"], "mean_wait": m["mean_wait"]})
+    finally:
+        scheduler.RISK_CAP_THRESHOLD = keep
+    return out
+
+
+def prealert_experiment(days=40, doctors=4, seed=7, share=0.5, lead=(5, 15)):
+    """Half of the ESI 1-2 patients arrive by ambulance and are announced 5-15 minutes ahead.
+    Door-to-doctor time for them, with and without holding a room, and what it costs everyone else."""
+    rng = np.random.default_rng(seed)
+    flags = np.random.default_rng(seed + 500)  # separate stream: the patients are the same as in compare_policies
+    acc = {mode: {"amb": [], "amb_hit": [], "others": [], "critical": []} for mode in ("off", "on")}
+    ambulances = 0
+    for _ in range(days):
+        patients = make_day(rng)
+        for p in patients:
+            if p["esi"] <= 2 and flags.random() < share:
+                p["ambulance"], p["lead"] = True, float(flags.uniform(*lead))
+                ambulances += 1
+        for mode in ("off", "on"):
+            run = simulate(patients, "mediqueue", doctors, prealert=(mode == "on"))
+            a = acc[mode]
+            for v in run["visits"]:
+                w = v["first_seen"] - v["arrived"]
+                if v.get("ambulance"):
+                    a["amb"].append(w)
+                    a["amb_hit"].append(w <= max(TARGET_MINUTES[v["true_esi"]], 1))
+                else:
+                    a["others"].append(w)
+                if v["true_esi"] <= 2:
+                    a["critical"].append(w)
+    out = {"ambulances": ambulances, "days": days, "lead": list(lead)}
+    for mode, a in acc.items():
+        out[mode] = {"ambulance_wait": float(np.mean(a["amb"])), "ambulance_p90": float(np.percentile(a["amb"], 90)),
+                     "ambulance_on_time": float(np.mean(a["amb_hit"])), "others_wait": float(np.mean(a["others"])),
+                     "critical_wait": float(np.mean(a["critical"]))}
     return out
 
 
@@ -208,4 +299,16 @@ if __name__ == "__main__":
     for row in summary["aging_sweep"]:
         print(f"  aging {str(row['aging']):>5s}: critical {row['critical_wait']:.1f}  low p95 {row['low_p95']:.0f}  "
               f"mean {row['mean_wait']:.1f}  ESI3 target {row['esi3_target'] * 100:.0f}%")
+
+    summary["risk_sweep"] = risk_sweep()
+    for row in summary["risk_sweep"]:
+        print(f"  risk threshold {str(row['threshold']):>4s}: under-triaged wait {row['hidden_wait']:.1f} "
+              f"on time {row['hidden_on_time'] * 100:.0f}%  critical {row['critical_wait']:.1f}  "
+              f"low p95 {row['low_p95']:.0f}  mean {row['mean_wait']:.1f}")
+
+    summary["prealert"] = pre = prealert_experiment(days=days)
+    for mode in ("off", "on"):
+        r = pre[mode]
+        print(f"  pre-alert {mode:3s}: ambulance door-to-doctor {r['ambulance_wait']:.1f} (p90 {r['ambulance_p90']:.0f}, "
+              f"on time {r['ambulance_on_time'] * 100:.0f}%)  others {r['others_wait']:.1f}  critical {r['critical_wait']:.1f}")
     (MODEL_DIR / "simulation.json").write_text(json.dumps(summary, indent=2))

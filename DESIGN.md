@@ -413,6 +413,22 @@ Uppercase 12px muted headers on a 2px ink rule; 10px cells with hairlines. Colum
 
 ### Waiting-room board
 The whole viewport is one enamel plate with a white keyline frame. Devanagari line and a condensed caps department heading on the left, a giant 24-hour IST clock on the right. "Now being seen": white cards pairing an enamel ROOM plate with a huge token. "Waiting": translucent tiles with a hairline keyline; the next patients are brass tiles marked "Next".
+When an ambulance is on its way, a brass band under the header says "Ambulance arriving in about 6 min · Room 3 is being kept free for it", so the waiting room sees why someone will go ahead of them.
+
+### Risk and ambulance tags
+Pills next to the ESI badge in the queue. "risk 31%" (warning amber on amber wash) marks an ESI 3–5 patient the AI thinks may really be an emergency; their aging interval is shorter and they may reach level 2. "ambulance" (enamel on enamel wash, with the ambulance glyph) marks a patient who arrived after a pre-alert. Both carry a plain-language title explaining the effect.
+
+### Held room
+A door plate whose room is held for an incoming ambulance gets a brass outer ring (2px gap, 2px brass), and its status line reads "Held for ambulance A01 · in 6 min". The doctor sees a calm enamel alarm ("Room held · ambulance A01 (ESI 2) in 6 min"); a refused "Call next" is an info flash, not an error.
+
+### Incoming ambulance row
+List row with the ambulance glyph in enamel, the A-code as a token, ESI badge, complaint and age/sex, and a second line naming the held room. Right side: a condensed caps countdown ("IN 6 MIN", red when late) above "Arrived" (primary) and "Cancel" (destructive outline, confirmed).
+
+### Token slip
+After a token is issued the triage desk shows a slip: white plate with an enamel keyline, an SVG QR code (dark #14201b on white, 2-module quiet zone, viewBox only so it scales) beside the token in condensed caps, its ESI badge, one sentence on what the code opens, and an "Open the patient's view" button.
+
+### Patient's own page
+Phone first, opened from the QR, no login and no names. A dado-green header with a small enamel EMERGENCY plate, then white panels: the token and arrival time, "You are 12th in the queue" in condensed caps with the position in enamel, the expected range, an enamel-wash note when their priority is about to rise, and a "Why you are waiting" list of plain counts (who came later but is more urgent, ambulances on the way, doctors on duty). It refreshes every 10 seconds; status changes replace the card ("Please go to Room 2", "You are being admitted").
 
 ## Do's and Don'ts
 
@@ -437,4 +453,5 @@ The whole viewport is one enamel plate with a white keyline frame. Devanagari li
 - **Don't** delete events from the log; stamp them.
 - **Don't** lift surfaces on hover or stack heavier shadows than the wall shadow.
 - **Don't** animate data people read: no growing chart bars, no sliding wait bars on refresh, no counting numbers, no page-load stagger.
+- **Don't** show another patient's name or details anywhere the public can see: the board and the patient page use tokens and counts only.
 - **Don't** set sentences, names or button labels in condensed caps.

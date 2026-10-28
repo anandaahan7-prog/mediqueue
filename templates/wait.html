@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#24594a">
+  <meta name="robots" content="noindex">
+  <title>Your wait · MediQueue ED</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231d3e9a'/%3E%3Crect x='2.5' y='2.5' width='27' height='27' rx='5' fill='none' stroke='white' stroke-width='1.5'/%3E%3Cpath d='M13 8h6v5h5v6h-5v5h-6v-5H8v-6h5z' fill='white'/%3E%3C/svg%3E">
+  <link rel="preload" href="{{ url_for('static', filename='fonts/archivo-latin-var.woff2') }}" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body class="wait-page" data-page="wait" data-code="{{ code or '' }}">
+  <header class="wait-head">
+    <div class="enamel-plate" aria-hidden="true"><span class="hi" lang="hi">आपातकालीन विभाग</span><span class="en">Emergency</span></div>
+    <p>MediQueue · your place in the queue</p>
+  </header>
+  <main class="wait-main">
+    {% if code %}
+    <section class="panel wait-card" id="wait-card" aria-live="polite">
+      <div class="skeleton" aria-hidden="true"><i style="height:90px"></i><i></i><i></i></div>
+    </section>
+    <section class="panel hidden" id="wait-why-panel" aria-labelledby="why-title">
+      <h2 id="why-title" class="wait-h2">Why you are waiting</h2>
+      <ul class="why" id="why"></ul>
+    </section>
+    <p class="wait-foot">This page updates by itself. If you feel worse while waiting, tell the nurse at the desk straight away.</p>
+    {% else %}
+    <section class="panel wait-card">
+      <h1 class="wait-h1">Token not found</h1>
+      <p class="muted">This link is not valid any more. Please ask the nurse at the desk for your token.</p>
+    </section>
+    {% endif %}
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

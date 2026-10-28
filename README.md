@@ -20,11 +20,23 @@ The OS part is deliberately small and real:
 |---|---|
 | Priority scheduling with aging (multiprocessor) | `scheduler.py`, `dispatch.py` – who the next free doctor sees |
 | Preemption (ESI 1 only) | `dispatch.preempt_for_critical` |
+| Dynamic priority (risk-adaptive aging) | `scheduler.effective_level` – the aging interval and cap depend on the AI's emergency risk |
+| Real-time reservation, deadline-aware dispatch | `dispatch.hold_room`, `scheduler.reserve_doctor` (best fit), `scheduler.pick_before` (backfilling) |
 | Critical section / mutex | `BEGIN IMMEDIATE … COMMIT` around dispatch and bed allocation |
 | Counting semaphore | `beds.py` – observation beds, boarding queue = blocked queue |
 
 AI part (`ai/`): random-forest triage suggestion with safety margin and red-flag rules, random-forest
 consultation-time model, gradient-boosting waiting-time correction.
+
+### What is new in this project
+
+| Feature | Idea | Result in simulation (40 shifts) |
+|---|---|---|
+| **Risk-adaptive aging** | The AI's probability that an ESI 3–5 patient is really an emergency (their *emergency risk*) shortens their aging interval, and from 30% lets them age into level 2. Low-risk patients still never pass level 3. | Patients the AI under-triaged wait **60 → 50 min**; ESI 1–2 wait unchanged (**9.4 min**); ESI 4–5 95th percentile 206 → 216 min |
+| **Ambulance pre-alert with a held room** | A crew calls ahead; the patient is triaged before arrival. For ESI 1–2 the room of the doctor free closest to (but before) the ETA is held (best-fit reservation), and that doctor's “Call next” only gives patients whose predicted consult ends before the ambulance does (deadline-aware dispatch, like backfilling). On arrival the patient goes straight in. | Ambulance door-to-doctor **8.7 → 4.6 min**, on time 73% → 85%; everyone else waits 43.9 → 49.0 min (the price of a reservation) |
+| **“Why am I waiting?” page** | Each token slip has a QR code. It opens the patient's own page: their place in the queue, the expected range, when their priority rises, and plain reasons (who came later but is more urgent, ambulances on the way, doctors on duty). Counts only, never anyone else's details. | Tested: no other patient's name ever appears |
+
+Both scheduling features can be switched off in **Reports & settings**, so the trade-offs can be shown live.
 
 ## Run it
 
@@ -32,6 +44,13 @@ consultation-time model, gradient-boosting waiting-time correction.
 pip install -r requirements.txt
 python seed.py          # creates mediqueue.db with demo staff, beds and patients
 python app.py           # http://localhost:5000
+```
+
+To scan the token-slip QR with a phone, start the app so other devices on the same Wi-Fi can reach it and open it
+through the laptop's IP address (e.g. `http://192.168.1.20:5000`); the QR then points at that address too:
+
+```bash
+HOST=0.0.0.0 python app.py
 ```
 
 Password for every account is `demo123`:
@@ -48,7 +67,7 @@ The trained models are already in `models/`. To rebuild everything from scratch:
 
 ```bash
 python -m ai.train      # triage + consult-time models, writes models/metrics.json
-python simulate.py      # policy comparison, aging sweep, wait-time model (~30 s)
+python simulate.py      # policy comparison, aging + risk sweeps, pre-alert experiment, wait-time model
 python race_test.py     # concurrency stress test
 python -m unittest tests.test_system -v
 ```
@@ -68,23 +87,30 @@ database. Every response carries an `X-MediQueue-Instance` header showing which 
 npx vercel deploy --prod
 ```
 
-## Suggested demo (8–10 minutes)
+## Suggested demo (about 13 minutes)
 
 1. **Triage desk** (log in as `priya`): the door plates at the top show each room as Busy / Free / Off. Click
    *Fill an example patient*, show the AI level plate, the reasons and the red "out of range" vitals. Pick a
    different level to show the signed delta ("AI suggested ESI 2 · you chose ESI 1 · up 1 level") and the required reason.
-   Click *Issue token and add to queue*.
+   Click *Issue token and add to queue*: the token slip with its QR code appears; open *the patient's view* in a new tab.
 2. **Queue** below the form: each bar is time waited drawn to scale against the ESI target tick. Point out the
-   ESI 5 patient tagged *now 3* (aging) and the *AI 4 · up 1* override tag.
+   ESI 5 patient tagged *now 3* (aging), T039 and T035 tagged *risk 31%* / *risk 57%* that have aged into level 2
+   (risk-adaptive aging), and the *AI 4 · up 1* override tag.
 3. **Doctor console** (log in as `iyer` in a second browser or incognito window): *Call next patient*. Watch the
    nurse's queue rows slide up, Room 3's slider glide to Busy, and the new token glow on the waiting-room display.
 4. **Preemption**: as the nurse, triage a patient with SpO₂ 82 and “responds to pain” → red flag, ESI 1.
    The doctor treating the least urgent patient gets the red *Pause and see T0xx* alarm, which drops in and pulses twice.
 5. **Beds**: click *Admit to observation* on the doctor console, then on the bed board click *Release bed* and then *Mark clean* –
    the semaphore value and boarding queue update.
-6. **Waiting-room display** (`/board`): tokens and estimated ranges, no names.
-7. **Reports** (log in as `admin`): scheduler comparison, aging sweep, model accuracy, and *Run test again*
-   for the concurrency test (no lock → double assignments, with lock → 0).
+6. **Ambulance pre-alert**: as the nurse open *Ambulances*, enter age 63, HR 118, BP 96, RR 26, SpO₂ 91, temp 37.0,
+   pain 8, chest pain, arriving in 6 min → ESI 2 and a held room. The held doctor's “Call next” is refused because
+   nobody waiting would be finished in time; the waiting-room display shows the ambulance band. Press *Arrived*:
+   the patient goes straight into the held room.
+7. **Waiting-room display** (`/board`) and **the patient's view** from step 1: tokens and ranges, no names, and the
+   reasons for the patient's place in the queue.
+8. **Reports** (log in as `admin`): scheduler comparison (fixed vs risk-adaptive aging), the new section with the
+   risk-threshold sweep and the pre-alert trade-off, model accuracy, and *Run test again* for the concurrency test
+   (no lock → double assignments, with lock → 0).
 
 The interface design ("Ward Corridor": green dado rail, cobalt enamel signs, door plates with an IN/OUT slider)
 is documented in `DESIGN.md`; motion only marks state changes and respects the reduce-motion setting.
@@ -94,13 +120,13 @@ is documented in `DESIGN.md`; motion only marks state changes and respects the r
 ```
 app.py            Flask routes and the live state API
 scheduler.py      pure scheduling logic (shared with the simulator)
-dispatch.py       "call next" + ESI 1 preemption, inside a critical section
+dispatch.py       "call next" + ESI 1 preemption + held rooms for ambulances, inside a critical section
 beds.py           observation beds as a counting semaphore
 race_test.py      concurrency stress test
-simulate.py       40 simulated shifts: FCFS vs SJF vs priority vs MediQueue
+simulate.py       40 simulated shifts: FCFS vs SJF vs priority vs MediQueue (fixed / risk-adaptive), pre-alerts
 seed.py           demo data, timestamps relative to "now"
 schema.sql        tables, constraints, indexes, queue view
 ai/               dataset generator, training, runtime models, wait-time model
 templates/ static/  the user interface
-tests/            14 end-to-end tests
+tests/            20 end-to-end tests
 ```

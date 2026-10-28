@@ -29,9 +29,9 @@ _model = None
 
 def features(visit, waiting, now, doctors_busy, doctors_total, arrivals_last_hour, schedule_eta, hour,
              aging_minutes=15):
-    level = effective_level(visit["esi"], now - visit["arrived"], aging_minutes)
+    level = effective_level(visit["esi"], now - visit["arrived"], aging_minutes, visit.get("risk", 0.0))
     others = [w for w in waiting if w["id"] != visit["id"]]
-    levels = [effective_level(w["esi"], now - w["arrived"], aging_minutes) for w in others]
+    levels = [effective_level(w["esi"], now - w["arrived"], aging_minutes, w.get("risk", 0.0)) for w in others]
     return [
         schedule_eta,
         visit["esi"],

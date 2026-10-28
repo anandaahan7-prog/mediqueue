@@ -10,6 +10,16 @@
   <div class="doors" id="doors"><div class="skeleton" aria-hidden="true"><i style="height:62px"></i></div></div>
 </section>
 {% endif %}
+{% if slip %}
+<section class="slip" aria-labelledby="slip-title">
+  <div class="slip-qr">{{ slip.qr|safe }}</div>
+  <div class="slip-text">
+    <h2 id="slip-title"><span class="token lg">{{ slip.token }}</span> <span class="esi-badge esi-{{ slip.esi }}">ESI {{ slip.esi }}</span></h2>
+    <p>Give the patient this token. Scanning the code opens their own page: their place in the queue, the expected wait, and why it changes.</p>
+    <a class="btn btn-sm" href="{{ slip.url }}" target="_blank" rel="noopener">Open the patient's view<span class="sr-only"> (opens in a new tab)</span></a>
+  </div>
+</section>
+{% endif %}
 <form method="post" id="triage-form"
       action="{{ url_for('retriage', visit_id=r.visit_id) if r else url_for('triage_submit') }}">
   <div class="split">
@@ -26,52 +36,26 @@
         <div class="field"><label for="f-phone">Phone</label><input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Optional" aria-describedby="h-phone"><small id="h-phone">for SMS updates</small></div>
       </div>
       {% endif %}
-      <div class="form-grid" id="vitals">
-        <div class="field"><label for="f-age">Age</label><input id="f-age" name="age" type="number" inputmode="numeric" min="0" max="120" required value="{{ r.age if r else '' }}"><small>years</small></div>
-        <div class="field" data-range="60,100"><label for="f-hr">Heart rate</label><input id="f-hr" name="heart_rate" type="number" inputmode="numeric" min="20" max="250" required value="{{ r.heart_rate if r else '' }}" aria-describedby="h-hr"><small id="h-hr">bpm · normal 60–100</small></div>
-        <div class="field" data-range="100,140"><label for="f-bp">Systolic BP</label><input id="f-bp" name="systolic_bp" type="number" inputmode="numeric" min="40" max="260" required value="{{ r.systolic_bp if r else '' }}" aria-describedby="h-bp"><small id="h-bp">mmHg · normal 100–140</small></div>
-        <div class="field" data-range="12,20"><label for="f-rr">Resp. rate</label><input id="f-rr" name="resp_rate" type="number" inputmode="numeric" min="4" max="60" required value="{{ r.resp_rate if r else '' }}" aria-describedby="h-rr"><small id="h-rr">per min · normal 12–20</small></div>
-        <div class="field" data-range="95,100"><label for="f-spo2">SpO₂</label><input id="f-spo2" name="spo2" type="number" inputmode="numeric" min="50" max="100" required value="{{ r.spo2 if r else '' }}" aria-describedby="h-spo2"><small id="h-spo2">% · normal 95 or more</small></div>
-        <div class="field" data-range="36.1,37.9"><label for="f-temp">Temperature</label><input id="f-temp" name="temperature" type="number" inputmode="decimal" step="0.1" min="30" max="44" required value="{{ r.temperature if r else '' }}" aria-describedby="h-temp"><small id="h-temp">°C · normal 36.1–37.9</small></div>
-        <div class="field" data-range="0,3"><label for="f-pain">Pain <span id="pain-val"></span></label><input id="f-pain" name="pain" type="range" min="0" max="10" value="{{ r.pain if r else 2 }}" aria-describedby="h-pain"><small id="h-pain">0 none – 10 worst</small></div>
-        <div class="field" data-range="0,0"><label for="f-avpu">Consciousness (AVPU)</label>
-          <select id="f-avpu" name="consciousness">{% for c in consciousness_levels %}<option value="{{ loop.index0 }}" {{ 'selected' if r and r.consciousness == loop.index0 }}>{{ c }}</option>{% endfor %}</select></div>
-        <div class="field span-2"><label for="f-complaint">Chief complaint</label>
-          <select id="f-complaint" name="complaint">{% for key, label in complaints.items() %}<option value="{{ key }}" {{ 'selected' if r and r.complaint == key }}>{{ label }}</option>{% endfor %}</select></div>
-      </div>
+      {% include "_vitals.html" %}
       {% if not r %}
       <div class="field" style="margin-top:14px"><label for="f-notes">Notes</label><textarea id="f-notes" name="notes" rows="2" placeholder="History, allergies, anything the doctor should know"></textarea></div>
       {% endif %}
     </section>
-
-    <section class="panel ai-panel" id="ai-panel" aria-labelledby="ai-title">
-      <div class="panel-head"><h2 id="ai-title">AI suggestion</h2><span class="ai-tag">decision support</span></div>
-      <div id="ai-result" aria-live="polite">
-        <div class="ai-placeholder">
-          <p>The suggested level appears here as soon as the vitals are filled in.</p>
-          <ol><li>Enter age and the six vital signs</li><li>Read the level and the reasons behind it</li><li>Confirm it, or pick another level and say why</li></ol>
-        </div>
-      </div>
-      <fieldset class="final-box">
-        <legend>Final triage level</legend>
-        <div class="esi-picker" id="esi-picker">
-          {% for l in range(1, 6) %}
-          <label class="esi-option esi-{{ l }}"><input type="radio" name="final_esi" value="{{ l }}" {{ 'checked' if r and r.esi == l }}><span>ESI {{ l }}</span></label>
-          {% endfor %}
-        </div>
-        <div class="field hidden" id="override-field" style="margin-top:12px">
-          <p class="delta-line" id="override-delta"></p>
-          <label for="f-reason">Why are you changing the AI suggestion?</label>
-          <input id="f-reason" name="override_reason" placeholder="e.g. known cardiac history, looks worse than the vitals suggest">
-        </div>
-        <button type="submit" class="btn btn-primary btn-lg btn-block" style="margin-top:14px">
-          {% if r %}Save new vitals{% else %}Issue token and add to queue{% endif %}
-        </button>
-        {% if r %}<a class="btn btn-quiet btn-block" href="{{ url_for('triage') }}" style="margin-top:6px">Cancel</a>{% endif %}
-      </fieldset>
-    </section>
+    {% with submit_label=("Save new vitals" if r else "Issue token and add to queue"), cancel_url=(url_for('triage') if r else none) %}
+      {% include "_ai_panel.html" %}
+    {% endwith %}
   </div>
 </form>
+
+{% if not r %}
+<section class="panel hidden" id="incoming-panel" aria-labelledby="incoming-title">
+  <div class="panel-head">
+    <div><h2 id="incoming-title">Incoming ambulances</h2><p class="hint">Triaged before arrival. Press “Arrived” when the patient is at the door.</p></div>
+    <a class="btn btn-sm" href="{{ url_for('prealert') }}">New pre-alert</a>
+  </div>
+  <div id="incoming" class="list"></div>
+</section>
+{% endif %}
 
 <section class="panel" aria-labelledby="queue-title">
   <div class="panel-head">

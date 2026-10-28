@@ -52,6 +52,38 @@
 <section class="panel"><div class="empty"><strong>No evaluation yet</strong><p>Run <code>python simulate.py</code> to compare the scheduling policies.</p></div></section>
 {% endif %}
 
+{% if simulation and simulation.prealert and simulation.risk_sweep %}
+{% set fx = simulation.policies.mediqueue_fixed %}{% set ad = simulation.policies.mediqueue %}{% set pa = simulation.prealert %}
+<h2 class="page-section" id="novel">Risk-adaptive aging and ambulance pre-alerts <span>same simulated shifts, scored on true urgency</span></h2>
+<div class="grid-2">
+  <section class="panel" aria-labelledby="n1">
+    <div class="panel-head"><h2 id="n1">Risk-adaptive aging</h2><span class="hint">{{ ad.hidden_urgent }} under-triaged patients</span></div>
+    <dl class="metric-row compare">
+      <div><dt>Under-triaged patients' wait</dt><dd>{{ '%.0f'|format(fx.hidden_urgent_wait) }} → {{ '%.0f'|format(ad.hidden_urgent_wait) }} <small>min</small></dd></div>
+      <div><dt>ESI 1–2 mean wait</dt><dd>{{ '%.1f'|format(fx.critical_wait) }} → {{ '%.1f'|format(ad.critical_wait) }} <small>min</small></dd></div>
+      <div><dt>ESI 4–5 95th percentile</dt><dd>{{ '%.0f'|format(fx.low_priority_p95) }} → {{ '%.0f'|format(ad.low_priority_p95) }} <small>min</small></dd></div>
+      <div><dt>Mean wait, everyone</dt><dd>{{ '%.1f'|format(fx.mean_wait) }} → {{ '%.1f'|format(ad.mean_wait) }} <small>min</small></dd></div>
+    </dl>
+    <p class="hint">Fixed aging → risk-adaptive. "Under-triaged" means the AI gave them a less urgent level than their true one. Their emergency risk (the AI's probability of ESI 1–2) shortens their aging interval and, from 30%, lets them reach level 2.</p>
+    <div class="chart-pair" style="margin-top:12px">
+      <div><h3>Under-triaged wait by risk threshold (min)</h3><div id="chart-risk-hidden" class="chart-scroll"></div></div>
+      <div><h3>ESI 1–2 mean wait by threshold (min)</h3><div id="chart-risk-critical" class="chart-scroll"></div></div>
+    </div>
+  </section>
+  <section class="panel" aria-labelledby="n2">
+    <div class="panel-head"><h2 id="n2">Ambulance pre-alerts</h2><span class="hint">{{ pa.ambulances }} ambulances, {{ pa.lead[0] }}–{{ pa.lead[1] }} min notice</span></div>
+    <dl class="metric-row compare">
+      <div><dt>Ambulance door-to-doctor</dt><dd>{{ '%.1f'|format(pa.off.ambulance_wait) }} → {{ '%.1f'|format(pa.on.ambulance_wait) }} <small>min</small></dd></div>
+      <div><dt>Seen within ESI target</dt><dd>{{ '%.0f'|format(pa.off.ambulance_on_time * 100) }}% → {{ '%.0f'|format(pa.on.ambulance_on_time * 100) }}%</dd></div>
+      <div><dt>Slowest 10% of ambulances</dt><dd>{{ '%.0f'|format(pa.off.ambulance_p90) }} → {{ '%.0f'|format(pa.on.ambulance_p90) }} <small>min</small></dd></div>
+      <div><dt>Everyone else's mean wait</dt><dd>{{ '%.1f'|format(pa.off.others_wait) }} → {{ '%.1f'|format(pa.on.others_wait) }} <small>min</small></dd></div>
+    </dl>
+    <p class="hint">Without → with a held room. Half of the ESI 1–2 patients arrive by ambulance. Holding a room is a real-time reservation: the ambulance is seen about twice as fast, and the price is idle doctor time that everyone else waits for. The admin can switch it off below.</p>
+    <div id="chart-prealert" class="chart-scroll" style="margin-top:12px"></div>
+  </section>
+</div>
+{% endif %}
+
 <h2 class="page-section" id="race">Concurrency test</h2>
 <div class="split wide">
   <section class="panel" aria-labelledby="r1">
@@ -75,13 +107,19 @@
     <p class="hint" style="margin-top:12px">A conflict means the same patient went to two doctors, or the same bed to two patients. The test runs on a scratch database, never on live data.</p>
     {% else %}<div class="empty"><strong>Not run yet</strong><p>Run the test to see what happens with and without the lock.</p></div>{% endif %}
   </section>
-  <section class="panel" aria-labelledby="s1">
+  <section class="panel" aria-labelledby="s1" id="settings">
     <div class="panel-head"><h2 id="s1">Scheduler settings</h2></div>
     <form method="post" action="{{ url_for('admin_settings') }}" class="stack" style="gap:12px">
       <div class="field"><label for="aging-input">Aging interval (minutes)</label>
         <input type="number" inputmode="numeric" name="aging_minutes" min="5" max="240" value="{{ aging }}" id="aging-input" aria-describedby="aging-help"></div>
-      <p class="hint" id="aging-help">A waiting ESI 4–5 patient moves up one level each time this many minutes pass, up to level 3. We chose 30 after the aging sweep above.</p>
-      <button type="submit" class="btn btn-primary">Save interval</button>
+      <p class="hint" id="aging-help">A waiting ESI 3–5 patient moves up one level each time this many minutes pass, up to level 3. We chose 30 after the aging sweep above.</p>
+      <fieldset class="choice">
+        <legend>How patients age</legend>
+        <label><input type="radio" name="aging_mode" value="adaptive" {{ 'checked' if aging_mode == 'adaptive' }}> <span><b>Risk-adaptive</b> (recommended): higher emergency risk ages faster and may reach level 2</span></label>
+        <label><input type="radio" name="aging_mode" value="fixed" {{ 'checked' if aging_mode != 'adaptive' }}> <span><b>Fixed</b>: the same interval for everyone, never above level 3</span></label>
+      </fieldset>
+      <label class="check"><input type="checkbox" name="hold_rooms" value="1" {{ 'checked' if hold_rooms == 1 }}> <span>Hold a room for ESI 1–2 ambulances after a pre-alert</span></label>
+      <button type="submit" class="btn btn-primary">Save settings</button>
     </form>
   </section>
 </div>

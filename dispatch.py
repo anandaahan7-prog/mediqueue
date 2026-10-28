@@ -13,7 +13,12 @@ patient twice - the second update would simply change 0 rows.
 """
 
 from db import log_event, minutes_between, now, parse, setting, stamp
-from scheduler import AGING_MINUTES, pick_next, preemption_target
+from scheduler import AGING_MINUTES, pick_before, pick_next, preemption_target, reserve_doctor
+
+
+def queue_policy(conn):
+    """Admin can switch between risk-adaptive aging (default) and the same interval for everyone."""
+    return "mediqueue" if setting(conn, "aging_mode", "adaptive") == "adaptive" else "mediqueue_fixed"
 
 
 def as_job(row):
@@ -25,6 +30,7 @@ def as_job(row):
         "id": row["visit_id"],
         "arrived": parse(row["arrived_at"]).timestamp() / 60,
         "esi": row["esi"],
+        "risk": row["ai_risk"] or 0.0,
         "predicted": row["predicted_minutes"],
         "consult_done": done,
     }
@@ -37,6 +43,51 @@ def now_minutes():
 
 class DispatchError(Exception):
     pass
+
+
+class RoomHeld(DispatchError):
+    """The doctor's room is held for an ambulance and nobody waiting would be finished in time."""
+
+
+def minutes_of(text):
+    return parse(text).timestamp() / 60
+
+
+def held_alert(conn, doctor_id):
+    """The incoming ambulance this doctor's room is held for, if any."""
+    return conn.execute("SELECT * FROM prealerts WHERE doctor_id = ? AND status = 'incoming' ORDER BY eta_at",
+                        (doctor_id,)).fetchone()
+
+
+def hold_room(conn, alert_id):
+    """Real-time reservation for an ESI 1-2 ambulance: choose whose room to hold (best fit before the ETA).
+    Runs inside the caller's transaction."""
+    alert = conn.execute("SELECT * FROM prealerts WHERE alert_id = ?", (alert_id,)).fetchone()
+    if alert is None or alert["status"] != "incoming" or alert["esi"] > 2 or setting(conn, "hold_rooms", 1) != 1:
+        conn.execute("UPDATE prealerts SET doctor_id = NULL WHERE alert_id = ?", (alert_id,))
+        return None
+    t = now_minutes()
+    free_at = {}
+    for d in conn.execute("SELECT user_id FROM users WHERE role = 'doctor' AND on_duty = 1").fetchall():
+        cur = _current_patient(conn, d["user_id"])
+        if cur is None:
+            free_at[d["user_id"]] = t
+        else:
+            job = as_job(cur)
+            free_at[d["user_id"]] = t + max(1, job["predicted"] - job["consult_done"])
+    taken = {r["doctor_id"] for r in conn.execute(
+        "SELECT doctor_id FROM prealerts WHERE status = 'incoming' AND doctor_id IS NOT NULL AND alert_id <> ?",
+        (alert_id,)).fetchall()}
+    doc = reserve_doctor(free_at, minutes_of(alert["eta_at"]), taken)
+    conn.execute("UPDATE prealerts SET doctor_id = ? WHERE alert_id = ?", (doc, alert_id))
+    return doc
+
+
+def rehold_rooms(conn, doctor_id):
+    """A doctor went off duty: move any room they were holding to someone else."""
+    for a in conn.execute("SELECT alert_id FROM prealerts WHERE doctor_id = ? AND status = 'incoming'",
+                          (doctor_id,)).fetchall():
+        hold_room(conn, a["alert_id"])
 
 
 def _current_patient(conn, doctor_id):
@@ -58,21 +109,48 @@ def _assign(conn, visit_id, doctor_id, user_id, note=""):
 
 def call_next(conn, doctor_id):
     aging = setting(conn, "aging_minutes", AGING_MINUTES)
+    policy = queue_policy(conn)
     conn.execute("BEGIN IMMEDIATE")  # ---- enter critical section ----
     try:
         if _current_patient(conn, doctor_id):
             raise DispatchError("Finish or pause your current patient first.")
         rows = conn.execute("SELECT * FROM visits WHERE status = 'waiting'").fetchall()
-        nxt = pick_next([as_job(r) for r in rows], now_minutes(), "mediqueue", aging)
+        jobs = [as_job(r) for r in rows]
+        mine = [r for r in rows if r["reserved_for"] == doctor_id and r["ambulance"]]
+        alert = held_alert(conn, doctor_id)
+        note = ""
+        if mine:  # the ambulance we held the room for has arrived
+            nxt = {"id": min(mine, key=lambda r: r["arrived_at"])["visit_id"]}
+            note = "ambulance patient, room was held"
+        elif alert is not None:
+            # deadline-aware: only someone who will be finished before the ambulance arrives
+            nxt = pick_before(jobs, now_minutes(), minutes_of(alert["eta_at"]), policy, aging)
+            if nxt is None:
+                eta = max(0, round(minutes_of(alert["eta_at"]) - now_minutes()))
+                raise RoomHeld(f"Your room is held for ambulance {alert['code']} (ESI {alert['esi']}), arriving in "
+                               f"about {eta} min. Nobody waiting would be finished before then.")
+            note = f"fits before ambulance {alert['code']} arrives"
+        else:
+            nxt = pick_next(jobs, now_minutes(), policy, aging)
         if nxt is None:
             conn.execute("COMMIT")
             return None
-        _assign(conn, nxt["id"], doctor_id, doctor_id)
+        _assign(conn, nxt["id"], doctor_id, doctor_id, note)
         conn.execute("COMMIT")  # ---- leave critical section ----
         return nxt["id"]
     except Exception:
         conn.execute("ROLLBACK")
         raise
+
+
+def hand_over(conn, visit_id, doctor_id, user_id):
+    """An ambulance arrived: if the doctor holding its room is on duty and free, assign it straight away.
+    Runs inside the caller's transaction; returns True when the patient went straight in."""
+    on_duty = conn.execute("SELECT 1 FROM users WHERE user_id = ? AND on_duty = 1", (doctor_id,)).fetchone()
+    if not on_duty or _current_patient(conn, doctor_id):
+        return False
+    _assign(conn, visit_id, doctor_id, user_id, "ambulance arrived, taken straight to the held room")
+    return True
 
 
 def preempt_for_critical(conn, doctor_id):

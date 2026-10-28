@@ -1,0 +1,26 @@
+{# AI suggestion + the nurse's final level; expects submit_label (and optionally cancel_url) #}
+{% set r = retriage if retriage is defined else none %}
+<section class="panel ai-panel" id="ai-panel" aria-labelledby="ai-title">
+  <div class="panel-head"><h2 id="ai-title">AI suggestion</h2><span class="ai-tag">decision support</span></div>
+  <div id="ai-result" aria-live="polite">
+    <div class="ai-placeholder">
+      <p>The suggested level appears here as soon as the vitals are filled in.</p>
+      <ol><li>Enter age and the six vital signs</li><li>Read the level and the reasons behind it</li><li>Confirm it, or pick another level and say why</li></ol>
+    </div>
+  </div>
+  <fieldset class="final-box">
+    <legend>Final triage level</legend>
+    <div class="esi-picker" id="esi-picker">
+      {% for l in range(1, 6) %}
+      <label class="esi-option esi-{{ l }}"><input type="radio" name="final_esi" value="{{ l }}" {{ 'checked' if r and r.esi == l }}><span>ESI {{ l }}</span></label>
+      {% endfor %}
+    </div>
+    <div class="field hidden" id="override-field" style="margin-top:12px">
+      <p class="delta-line" id="override-delta"></p>
+      <label for="f-reason">Why are you changing the AI suggestion?</label>
+      <input id="f-reason" name="override_reason" placeholder="e.g. known cardiac history, looks worse than the vitals suggest">
+    </div>
+    <button type="submit" class="btn btn-primary btn-lg btn-block" style="margin-top:14px">{{ submit_label }}</button>
+    {% if cancel_url %}<a class="btn btn-quiet btn-block" href="{{ cancel_url }}" style="margin-top:6px">Cancel</a>{% endif %}
+  </fieldset>
+</section>

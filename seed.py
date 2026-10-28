@@ -5,6 +5,7 @@ always looks like a busy afternoon whenever you run it.
     python seed.py
 """
 
+import secrets
 from datetime import timedelta
 
 import numpy as np
@@ -13,6 +14,7 @@ from werkzeug.security import generate_password_hash
 from ai import triage_model
 from ai.dataset import sample_patient
 from db import DB_PATH, init_db, now, stamp
+from scheduler import risk_of
 
 PASSWORD = "demo123"
 
@@ -49,12 +51,13 @@ def insert_visit(conn, rng, name, arrived, status, vitals=None, complaint=None, 
     vid = conn.execute(
         """INSERT INTO visits (patient_id, token, arrived_at, complaint, heart_rate, systolic_bp, resp_rate, spo2,
                                temperature, consciousness, pain, ai_esi, ai_confidence, esi, override_reason,
-                               predicted_minutes, status, doctor_id, first_seen_at, consult_started_at,
-                               consult_done_min, finished_at, triaged_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                               ai_risk, predicted_minutes, public_code, status, doctor_id, first_seen_at,
+                               consult_started_at, consult_done_min, finished_at, triaged_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (pid, f"T{count + 1:03d}", stamp(arrived), v["complaint"], v["heart_rate"], v["systolic_bp"], v["resp_rate"],
          v["spo2"], v["temperature"], v["consciousness"], v["pain"], ai["esi"], ai["confidence"], esi, override,
-         minutes, status, doctor, stamp(seen) if seen else None, stamp(started) if started else None,
+         risk_of(ai["probs"], esi), minutes, secrets.token_urlsafe(6), status, doctor, stamp(seen) if seen else None,
+         stamp(started) if started else None,
          (finished - seen).total_seconds() / 60 if finished and seen else 0, stamp(finished) if finished else None,
          nurse)).lastrowid
     conn.execute("INSERT INTO events (visit_id, user_id, at, kind, detail) VALUES (?, ?, ?, 'triaged', ?)",
@@ -68,6 +71,8 @@ def main():
     t0 = now()
 
     conn.execute("INSERT INTO settings VALUES ('aging_minutes', '30')")
+    conn.execute("INSERT INTO settings VALUES ('aging_mode', 'adaptive')")
+    conn.execute("INSERT INTO settings VALUES ('hold_rooms', '1')")
     for name, username, role, room, duty in STAFF:
         conn.execute("INSERT INTO users (name, username, password_hash, role, room, on_duty) VALUES (?, ?, ?, ?, ?, ?)",
                      (name, username, generate_password_hash(PASSWORD), role, room, duty))
@@ -115,8 +120,14 @@ def main():
     insert_visit(conn, rng, next(names), t0 - timedelta(minutes=12), "waiting", vitals=vitals, final_esi=3,
                  override="Known diabetic, vomiting since morning")
 
+    # a borderline ESI 3: the model gives ~31% that this is really an emergency, so risk-adaptive
+    # aging moves them up every ~11 minutes and lets them reach level 2
+    vitals = {"age": 47, "heart_rate": 104, "systolic_bp": 123, "resp_rate": 30, "spo2": 98, "temperature": 37.2,
+              "consciousness": 0, "pain": 5, "complaint": "breathing"}
+    insert_visit(conn, rng, next(names), t0 - timedelta(minutes=18), "waiting", vitals=vitals)
+
     conn.close()
-    print(f"Created {DB_PATH.name}: 7 staff, 8 beds, {26 + 2 + len(waiting) + 1} visits. Password for everyone: {PASSWORD}")
+    print(f"Created {DB_PATH.name}: 7 staff, 8 beds, {26 + 2 + len(waiting) + 2} visits. Password for everyone: {PASSWORD}")
 
 
 if __name__ == "__main__":

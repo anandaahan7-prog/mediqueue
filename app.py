@@ -7,8 +7,10 @@ MediQueue - AI-assisted emergency department queue.
 Logins (password demo123): nurse priya, doctors rao / mehta / iyer / khan, admin admin
 """
 
+import io
 import json
 import os
+import secrets
 from functools import wraps
 from pathlib import Path
 
@@ -23,7 +25,8 @@ from ai.dataset import COMPLAINT_LABELS, COMPLAINTS, CONSCIOUSNESS
 from datetime import timedelta
 
 from db import connect, log_event, minutes_between, now, setting, stamp, today as today_date
-from scheduler import AGING_MINUTES, TARGET_MINUTES, effective_level, estimate_waits, order_queue
+from scheduler import (AGING_MINUTES, RISK_CAP_THRESHOLD, TARGET_MINUTES, aging_cap, aging_interval, effective_level,
+                       estimate_waits, order_queue, risk_of)
 
 BASE = Path(__file__).resolve().parent
 # results written at runtime (the concurrency test) must go to a writable folder on Vercel
@@ -117,10 +120,57 @@ def round5(x):
     return int(5 * round(x / 5))
 
 
+def qr_svg(url):
+    """QR code for the patient's wait page, as inline SVG (no image files, works offline)."""
+    import segno
+    buf = io.BytesIO()
+    segno.make(url, error="m").save(buf, kind="svg", scale=5, border=2, dark="#14201b", light="#ffffff",
+                                    xmldecl=False, svgclass="qr", lineclass=None, omitsize=True,
+                                    title="Scan to follow your wait")
+    return buf.getvalue().decode()
+
+
+def new_visit(conn, v, ai, final, reason, minutes, name, sex, phone, notes, user_id, ambulance=False, reserved_for=None):
+    """Insert patient + visit and issue the next token. Call inside BEGIN IMMEDIATE ... COMMIT."""
+    cur = conn.execute("INSERT INTO patients (name, age, sex, phone, created_at) VALUES (?, ?, ?, ?, ?)",
+                       (name, v["age"], sex, phone or None, stamp()))
+    count = conn.execute("SELECT COUNT(*) FROM visits WHERE date(arrived_at) = ?", (today_date(),)).fetchone()[0]
+    token = f"T{count + 1:03d}"
+    while conn.execute("SELECT 1 FROM visits WHERE token = ?", (token,)).fetchone():
+        count += 1
+        token = f"T{count + 1:03d}"
+    cur = conn.execute(
+        """INSERT INTO visits (patient_id, token, arrived_at, complaint, notes, heart_rate, systolic_bp, resp_rate,
+                               spo2, temperature, consciousness, pain, ai_esi, ai_confidence, esi, override_reason,
+                               ai_risk, predicted_minutes, public_code, ambulance, reserved_for, triaged_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (cur.lastrowid, token, stamp(), v["complaint"], notes, v["heart_rate"], v["systolic_bp"], v["resp_rate"],
+         v["spo2"], v["temperature"], v["consciousness"], v["pain"], ai["esi"], ai["confidence"], final, reason,
+         risk_of(ai["probs"], final), minutes, secrets.token_urlsafe(6), int(ambulance), reserved_for, user_id))
+    detail = f"ESI {final} (AI suggested {ai['esi']}{', overridden: ' + reason if reason else ''})"
+    if ambulance:
+        detail = "ambulance arrival, " + detail
+    log_event(conn, "triaged", detail, cur.lastrowid, user_id)
+    return cur.lastrowid, token
+
+
+def triage_decision(form, v):
+    """AI suggestion + the nurse's final level for a submitted form, or an error message."""
+    ai = triage_model.suggest(v)
+    final = int(form.get("final_esi") or ai["esi"])
+    reason = form.get("override_reason", "").strip() or None
+    if final != ai["esi"] and not reason:
+        return None, "Please write a short reason when you change the AI suggestion."
+    minutes = ai["minutes"] if final == ai["esi"] else triage_model.predict_minutes(v, final)
+    return (ai, final, reason, minutes), None
+
+
 # ---------------------------------------------------------------- live state (used by every screen)
 
 def build_state(conn):
     aging = setting(conn, "aging_minutes", AGING_MINUTES)
+    policy = dispatch.queue_policy(conn)
+    adaptive = policy == "mediqueue"
     now_min = dispatch.now_minutes()
 
     rows = conn.execute("SELECT * FROM v_queue").fetchall()
@@ -138,7 +188,7 @@ def build_state(conn):
     # waiting-time estimate: scheduler replay, corrected by the ML model
     eta = {}
     if on_duty:
-        plain = estimate_waits(waiting_jobs, busy_until, free_doctors, now_min, aging)
+        plain = estimate_waits(waiting_jobs, busy_until, free_doctors, now_min, aging, policy)
         recent = conn.execute("SELECT COUNT(*) FROM visits WHERE arrived_at >= ?",
                               (stamp(now() - timedelta(minutes=60)),)).fetchone()[0]
         hour = now().hour + now().minute / 60
@@ -149,15 +199,20 @@ def build_state(conn):
 
     by_id = {r["visit_id"]: r for r in rows}
     queue = []
-    for pos, job in enumerate(order_queue(waiting_jobs, now_min, aging_minutes=aging), start=1):
+    for pos, job in enumerate(order_queue(waiting_jobs, now_min, policy, aging), start=1):
         r = by_id[job["id"]]
         waited = now_min - job["arrived"]
         est = eta.get(job["id"])
+        risk = r["ai_risk"] or 0.0
         queue.append({
             "id": r["visit_id"], "position": pos, "token": r["token"], "name": r["patient_name"],
             "age": r["age"], "sex": r["sex"], "esi": r["esi"], "ai_esi": r["ai_esi"],
             "overridden": r["esi"] != r["ai_esi"], "complaint": COMPLAINT_LABELS[r["complaint"]],
-            "waited": round(waited), "effective": effective_level(r["esi"], waited, aging),
+            "waited": round(waited), "effective": effective_level(r["esi"], waited, aging, risk, adaptive),
+            "arrived_min": job["arrived"], "risk": round(risk, 2), "ambulance": bool(r["ambulance"]),
+            "high_risk": adaptive and r["esi"] >= 3 and risk >= RISK_CAP_THRESHOLD,
+            "aging_every": round(aging_interval(risk, aging, adaptive)) if r["esi"] >= 3 else None,
+            "aging_cap": aging_cap(risk, adaptive),
             "predicted": r["predicted_minutes"], "paused": r["paused_count"] > 0,
             "over_target": waited > max(TARGET_MINUTES[r["esi"]], 1),
             "recheck": waited > max(30, TARGET_MINUTES[r["esi"]]) and r["esi"] >= 3,
@@ -166,11 +221,21 @@ def build_state(conn):
             "spo2": r["spo2"], "heart_rate": r["heart_rate"],
         })
 
+    alerts = conn.execute("""SELECT a.*, u.name AS doctor_name, u.room FROM prealerts a
+                            LEFT JOIN users u ON u.user_id = a.doctor_id
+                            WHERE a.status = 'incoming' ORDER BY a.eta_at""").fetchall()
+    incoming = [{"id": a["alert_id"], "code": a["code"], "esi": a["esi"], "age": a["age"], "sex": a["sex"],
+                 "complaint": COMPLAINT_LABELS[a["complaint"]], "eta_min": round(dispatch.minutes_of(a["eta_at"]) - now_min),
+                 "doctor_id": a["doctor_id"], "doctor": a["doctor_name"], "room": a["room"]} for a in alerts]
+    held = {a["doctor_id"]: a for a in incoming if a["doctor_id"]}
+
     doctor_list = []
     for d in doctors:
         cur = in_consult.get(d["user_id"])
+        h = held.get(d["user_id"])
         doctor_list.append({
             "id": d["user_id"], "name": d["name"], "room": d["room"], "on_duty": bool(d["on_duty"]),
+            "held": None if h is None else {"code": h["code"], "esi": h["esi"], "eta_min": h["eta_min"]},
             "current": None if cur is None else {
                 "id": cur["visit_id"], "token": cur["token"], "name": cur["patient_name"], "esi": cur["esi"],
                 "complaint": COMPLAINT_LABELS[cur["complaint"]], "predicted": cur["predicted_minutes"],
@@ -199,6 +264,9 @@ def build_state(conn):
 
     return {
         "aging": aging,
+        "aging_mode": "adaptive" if adaptive else "fixed",
+        "hold_rooms": setting(conn, "hold_rooms", 1) == 1,
+        "incoming": incoming,
         "queue": queue,
         "doctors": doctor_list,
         "preempt_doctor": dispatch.who_should_preempt(conn),
@@ -260,12 +328,18 @@ def api_state():
 @app.route("/triage", methods=["GET"])
 @login_required("nurse", "admin")
 def triage():
-    retriage = None
+    retriage = slip = None
     if request.args.get("retriage"):
         retriage = get_db().execute("SELECT v.*, p.name, p.age, p.sex FROM visits v JOIN patients p "
                                     "ON p.patient_id = v.patient_id WHERE visit_id = ?",
                                     (request.args["retriage"],)).fetchone()
-    return render_template("triage.html", page="triage", retriage=retriage)
+    if request.args.get("slip"):
+        row = get_db().execute("SELECT token, esi, public_code, ambulance FROM visits WHERE visit_id = ?",
+                               (request.args["slip"],)).fetchone()
+        if row is not None and row["public_code"]:
+            url = url_for("wait_page", code=row["public_code"], _external=True)
+            slip = {"token": row["token"], "esi": row["esi"], "url": url, "qr": qr_svg(url)}
+    return render_template("triage.html", page="triage", retriage=retriage, slip=slip)
 
 
 @app.route("/api/triage/preview", methods=["POST"])
@@ -288,39 +362,120 @@ def triage_submit():
     except (KeyError, ValueError):
         flash("Please fill in every vital sign.", "error")
         return redirect(url_for("triage"))
-    ai = triage_model.suggest(v)
-    final = int(f.get("final_esi") or ai["esi"])
-    reason = f.get("override_reason", "").strip() or None
-    if final != ai["esi"] and not reason:
-        flash("Please write a short reason when you change the AI suggestion.", "error")
+    decision, error = triage_decision(f, v)
+    if error:
+        flash(error, "error")
         return redirect(url_for("triage"))
-    minutes = ai["minutes"] if final == ai["esi"] else triage_model.predict_minutes(v, final)
+    ai, final, reason, minutes = decision
 
     conn.execute("BEGIN IMMEDIATE")
     try:
-        cur = conn.execute("INSERT INTO patients (name, age, sex, phone, created_at) VALUES (?, ?, ?, ?, ?)",
-                           (f["name"].strip(), v["age"], f["sex"], f.get("phone") or None, stamp()))
-        count = conn.execute("SELECT COUNT(*) FROM visits WHERE date(arrived_at) = ?", (today_date(),)).fetchone()[0]
-        token = f"T{count + 1:03d}"
-        while conn.execute("SELECT 1 FROM visits WHERE token = ?", (token,)).fetchone():
-            count += 1
-            token = f"T{count + 1:03d}"
-        cur = conn.execute(
-            """INSERT INTO visits (patient_id, token, arrived_at, complaint, notes, heart_rate, systolic_bp, resp_rate,
-                                   spo2, temperature, consciousness, pain, ai_esi, ai_confidence, esi,
-                                   override_reason, predicted_minutes, triaged_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (cur.lastrowid, token, stamp(), v["complaint"], f.get("notes"), v["heart_rate"], v["systolic_bp"],
-             v["resp_rate"], v["spo2"], v["temperature"], v["consciousness"], v["pain"], ai["esi"],
-             ai["confidence"], final, reason, minutes, g.user["user_id"]))
-        detail = f"ESI {final} (AI suggested {ai['esi']}{', overridden: ' + reason if reason else ''})"
-        log_event(conn, "triaged", detail, cur.lastrowid, g.user["user_id"])
+        visit_id, token = new_visit(conn, v, ai, final, reason, minutes, f["name"].strip(), f["sex"], f.get("phone"),
+                                    f.get("notes"), g.user["user_id"])
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
         raise
     flash(f"Token {token} issued - ESI {final}, expected consultation about {minutes} min.", "success")
-    return redirect(url_for("triage"))
+    return redirect(url_for("triage", slip=visit_id))
+
+
+# ---------------------------------------------------------------- ambulance pre-alerts
+
+@app.route("/prealert", methods=["GET"])
+@login_required("nurse", "admin")
+def prealert():
+    return render_template("prealert.html", page="prealert")
+
+
+@app.route("/prealert", methods=["POST"])
+@login_required("nurse", "admin")
+def prealert_submit():
+    conn = get_db()
+    f = request.form
+    try:
+        v = vitals_from(f)
+        eta = max(1, min(90, int(f["eta_minutes"])))
+    except (KeyError, ValueError):
+        flash("Please fill in the vital signs and the arrival time.", "error")
+        return redirect(url_for("prealert"))
+    decision, error = triage_decision(f, v)
+    if error:
+        flash(error, "error")
+        return redirect(url_for("prealert"))
+    ai, final, reason, minutes = decision
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM prealerts WHERE date(created_at) = ?", (today_date(),)).fetchone()[0]
+        code = f"A{count + 1:02d}"
+        while conn.execute("SELECT 1 FROM prealerts WHERE code = ?", (code,)).fetchone():
+            count += 1
+            code = f"A{count + 1:02d}"
+        alert_id = conn.execute(
+            """INSERT INTO prealerts (code, created_at, eta_at, patient_name, age, sex, complaint, notes, heart_rate,
+                                     systolic_bp, resp_rate, spo2, temperature, consciousness, pain, ai_esi,
+                                     ai_confidence, esi, override_reason, ai_risk, predicted_minutes, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (code, stamp(), stamp(now() + timedelta(minutes=eta)), f.get("name", "").strip() or None, v["age"],
+             f.get("sex", "O"), v["complaint"], f.get("notes"), v["heart_rate"], v["systolic_bp"], v["resp_rate"],
+             v["spo2"], v["temperature"], v["consciousness"], v["pain"], ai["esi"], ai["confidence"], final, reason,
+             risk_of(ai["probs"], final), minutes, g.user["user_id"])).lastrowid
+        doc = dispatch.hold_room(conn, alert_id)
+        room = conn.execute("SELECT name, room FROM users WHERE user_id = ?", (doc,)).fetchone() if doc else None
+        held = f"{room['room']} ({room['name']}) is held" if room else "no room held"
+        log_event(conn, "prealert", f"ambulance {code}: ESI {final}, arriving in {eta} min, {held}", None,
+                  g.user["user_id"])
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    if room:
+        flash(f"Pre-alert {code}: ESI {final}, arriving in {eta} min. {room['room']} ({room['name']}) is held for it.",
+              "success")
+    else:
+        why = "only ESI 1-2 ambulances get a held room" if final > 2 else "room holding is off or no doctor is on duty"
+        flash(f"Pre-alert {code}: ESI {final}, arriving in {eta} min. No room held ({why}).", "info")
+    return redirect(url_for("prealert"))
+
+
+@app.route("/prealerts/<int:alert_id>/<action>", methods=["POST"])
+@login_required("nurse", "admin")
+def prealert_action(alert_id, action):
+    conn = get_db()
+    back = request.form.get("back", "")
+    if not back.startswith("/") or back.startswith("//"):  # only ever redirect within the app
+        back = url_for("prealert")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        a = conn.execute("SELECT * FROM prealerts WHERE alert_id = ? AND status = 'incoming'", (alert_id,)).fetchone()
+        if a is None:
+            conn.execute("COMMIT")
+            flash("That ambulance is no longer expected.", "error")
+            return redirect(back)
+        if action == "cancel":
+            conn.execute("UPDATE prealerts SET status = 'cancelled', doctor_id = NULL WHERE alert_id = ?", (alert_id,))
+            log_event(conn, "prealert", f"ambulance {a['code']} cancelled", None, g.user["user_id"])
+            conn.execute("COMMIT")
+            flash(f"Pre-alert {a['code']} cancelled; any held room is free again.", "info")
+            return redirect(back)
+        v = {k: a[k] for k in ("age", "complaint", *VITAL_FIELDS)}
+        ai = {"esi": a["ai_esi"], "confidence": a["ai_confidence"], "probs": triage_model.probabilities(v)}
+        visit_id, token = new_visit(conn, v, ai, a["esi"], a["override_reason"], a["predicted_minutes"],
+                                    a["patient_name"] or f"Ambulance {a['code']}", a["sex"], None, a["notes"],
+                                    g.user["user_id"], ambulance=True, reserved_for=a["doctor_id"])
+        conn.execute("UPDATE prealerts SET status = 'arrived', visit_id = ? WHERE alert_id = ?", (visit_id, alert_id))
+        straight_in = bool(a["doctor_id"]) and dispatch.hand_over(conn, visit_id, a["doctor_id"], g.user["user_id"])
+        room = conn.execute("SELECT room FROM users WHERE user_id = ?", (a["doctor_id"],)).fetchone() if a["doctor_id"] else None
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    if straight_in:
+        flash(f"Ambulance {a['code']} arrived as {token} and went straight to {room['room']}.", "success")
+    else:
+        flash(f"Ambulance {a['code']} arrived as {token}; it is at the front of the queue.", "success")
+    return redirect(back)
 
 
 @app.route("/visits/<int:visit_id>/retriage", methods=["POST"])
@@ -338,10 +493,11 @@ def retriage(visit_id):
         new_esi = int(request.form["final_esi"])
     conn.execute("BEGIN IMMEDIATE")
     conn.execute("""UPDATE visits SET heart_rate = ?, systolic_bp = ?, resp_rate = ?, spo2 = ?, temperature = ?,
-                    consciousness = ?, pain = ?, ai_esi = ?, ai_confidence = ?, esi = ?, predicted_minutes = ?
-                    WHERE visit_id = ?""",
+                    consciousness = ?, pain = ?, ai_esi = ?, ai_confidence = ?, esi = ?, predicted_minutes = ?,
+                    ai_risk = ? WHERE visit_id = ?""",
                  (v["heart_rate"], v["systolic_bp"], v["resp_rate"], v["spo2"], v["temperature"], v["consciousness"],
-                  v["pain"], ai["esi"], ai["confidence"], new_esi, triage_model.predict_minutes(v, new_esi), visit_id))
+                  v["pain"], ai["esi"], ai["confidence"], new_esi, triage_model.predict_minutes(v, new_esi),
+                  risk_of(ai["probs"], new_esi), visit_id))
     log_event(conn, "retriaged", f"ESI {visit['esi']} -> {new_esi} after new vitals", visit_id, g.user["user_id"])
     conn.execute("COMMIT")
     flash(f"{visit['token']} re-triaged: ESI {visit['esi']} → {new_esi}.", "success")
@@ -392,7 +548,10 @@ def doctor_patient():
 @login_required("doctor")
 def doctor_duty():
     conn = get_db()
+    conn.execute("BEGIN IMMEDIATE")
     conn.execute("UPDATE users SET on_duty = 1 - on_duty WHERE user_id = ?", (g.user["user_id"],))
+    dispatch.rehold_rooms(conn, g.user["user_id"])  # an ambulance's held room moves to a doctor still on duty
+    conn.execute("COMMIT")
     return redirect(url_for("doctor"))
 
 
@@ -403,7 +562,11 @@ def doctor_action(action):
     me = g.user["user_id"]
     try:
         if action == "call-next":
-            visit_id = dispatch.call_next(conn, me)
+            try:
+                visit_id = dispatch.call_next(conn, me)
+            except dispatch.RoomHeld as held:
+                flash(str(held), "info")
+                return redirect(url_for("doctor"))
             if visit_id is None:
                 flash("Nobody is waiting right now.", "info")
             else:
@@ -455,7 +618,65 @@ def api_board():
     state = build_state(get_db())
     calling = [{"token": d["current"]["token"], "room": d["room"]} for d in state["doctors"] if d["current"]]
     waiting = [{"token": q["token"], "eta_range": q["eta_range"], "urgent": q["esi"] <= 2} for q in state["queue"]]
-    return jsonify({"calling": calling, "waiting": waiting, "doctors_on_duty": state["stats"]["on_duty"]})
+    incoming = [{"eta_min": a["eta_min"], "room": a["room"]} for a in state["incoming"]]
+    return jsonify({"calling": calling, "waiting": waiting, "incoming": incoming,
+                    "doctors_on_duty": state["stats"]["on_duty"]})
+
+
+# ---------------------------------------------------------------- the patient's own page (QR on the token slip)
+
+@app.route("/wait/<code>")
+def wait_page(code):
+    if get_db().execute("SELECT 1 FROM visits WHERE public_code = ?", (code,)).fetchone() is None:
+        return render_template("wait.html", page="wait", code=None), 404
+    return render_template("wait.html", page="wait", code=code)
+
+
+def why_waiting(me, queue, state):
+    """Plain reasons for a waiting patient's place in the queue. Only counts, never anyone else's details."""
+    ahead = queue[:me["position"] - 1]
+    reasons = []
+    later_urgent = sum(1 for q in ahead if q["arrived_min"] > me["arrived_min"])
+    if later_urgent:
+        reasons.append(f"{later_urgent} {'person' if later_urgent == 1 else 'people'} who came in after you "
+                       f"{'needs' if later_urgent == 1 else 'need'} a doctor more urgently.")
+    more_urgent = sum(1 for q in ahead if q["effective"] < me["effective"] and q["arrived_min"] <= me["arrived_min"])
+    if more_urgent:
+        reasons.append(f"{more_urgent} more urgent {'patient' if more_urgent == 1 else 'patients'} arrived before you.")
+    same = sum(1 for q in ahead if q["effective"] == me["effective"] and q["arrived_min"] <= me["arrived_min"])
+    if same:
+        reasons.append(f"{same} {'patient' if same == 1 else 'patients'} with the same priority arrived before you.")
+    if any(q["paused"] for q in ahead):
+        reasons.append("A doctor paused a consultation for a life-threatening case; that patient continues first.")
+    if state["incoming"]:
+        n = len(state["incoming"])
+        reasons.append(f"{n} {'ambulance is' if n == 1 else 'ambulances are'} on the way, and a room may be kept free.")
+    busy = sum(1 for d in state["doctors"] if d["current"])
+    reasons.append(f"{state['stats']['on_duty']} {'doctor is' if state['stats']['on_duty'] == 1 else 'doctors are'} "
+                   f"on duty, {busy} with a patient right now.")
+    return reasons
+
+
+@app.route("/api/wait/<code>")
+def api_wait(code):
+    conn = get_db()
+    row = conn.execute("""SELECT v.*, u.room FROM visits v LEFT JOIN users u ON u.user_id = v.doctor_id
+                           WHERE v.public_code = ?""", (code,)).fetchone()
+    if row is None:
+        return jsonify({"error": "unknown"}), 404
+    out = {"token": row["token"], "status": row["status"], "arrived": row["arrived_at"][11:16]}
+    if row["status"] == "waiting":
+        state = build_state(conn)
+        me = next(q for q in state["queue"] if q["id"] == row["visit_id"])
+        out.update({"position": me["position"], "waiting": len(state["queue"]), "waited": me["waited"],
+                    "eta_range": me["eta_range"], "reasons": why_waiting(me, state["queue"], state)})
+        if me["aging_every"] and me["effective"] > me["aging_cap"]:
+            steps = int(me["waited"] // me["aging_every"]) + 1
+            out["next_step_in"] = max(1, round(steps * me["aging_every"] - me["waited"]))
+            out["aging_every"] = me["aging_every"]
+    elif row["status"] == "in_consult":
+        out["room"] = row["room"]
+    return jsonify(out)
 
 
 # ---------------------------------------------------------------- admin
@@ -471,7 +692,9 @@ def _load_json(name):
 @app.route("/admin")
 @login_required("admin")
 def admin():
-    return render_template("admin.html", page="admin", aging=setting(get_db(), "aging_minutes", AGING_MINUTES),
+    conn = get_db()
+    return render_template("admin.html", page="admin", aging=setting(conn, "aging_minutes", AGING_MINUTES),
+                           aging_mode=setting(conn, "aging_mode", "adaptive"), hold_rooms=setting(conn, "hold_rooms", 1),
                            metrics=_load_json("metrics.json"),
                            simulation=_load_json("simulation.json"), race=_load_json("race.json"))
 
@@ -505,10 +728,14 @@ def admin_reports():
 @login_required("admin")
 def admin_settings():
     minutes = max(5, min(240, int(request.form["aging_minutes"])))
+    mode = "fixed" if request.form.get("aging_mode") == "fixed" else "adaptive"
+    hold = "1" if request.form.get("hold_rooms") else "0"
     conn = get_db()
-    conn.execute("INSERT INTO settings (key, value) VALUES ('aging_minutes', ?) "
-                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(minutes),))
-    flash(f"Aging interval set to {minutes} minutes.", "success")
+    for key, value in (("aging_minutes", str(minutes)), ("aging_mode", mode), ("hold_rooms", hold)):
+        conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+    flash(f"Saved: aging every {minutes} min ({'risk-adaptive' if mode == 'adaptive' else 'fixed'}), "
+          f"rooms {'held' if hold == '1' else 'not held'} for ambulances.", "success")
     return redirect(url_for("admin"))
 
 
@@ -523,4 +750,5 @@ def admin_race_test():
 
 
 if __name__ == "__main__":
-    app.run(debug=False, threaded=True, port=5000)
+    # HOST=0.0.0.0 lets phones on the same Wi-Fi open the app (and scan the token-slip QR) via the laptop's IP
+    app.run(debug=False, threaded=True, host=os.environ.get("HOST", "127.0.0.1"), port=5000)
