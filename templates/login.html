@@ -3,22 +3,34 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f2f5f9">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#080d17">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#24594a">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f2a22">
   <title>Sign in · MediQueue ED</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d9488'/%3E%3Cpath d='M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z' fill='white'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231d3e9a'/%3E%3Crect x='2.5' y='2.5' width='27' height='27' rx='5' fill='none' stroke='white' stroke-width='1.5'/%3E%3Cpath d='M13 8h6v5h5v6h-5v5h-6v-5H8v-6h5z' fill='white'/%3E%3C/svg%3E">
+  <link rel="preload" href="{{ url_for('static', filename='fonts/archivo-latin-var.woff2') }}" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   <script>try { document.documentElement.dataset.theme = localStorage.getItem('mq-theme') || 'light'; } catch (e) {}</script>
 </head>
 <body class="login-page" data-page="login">
-  <main class="login-wrap">
-    <div class="login-card card">
-      <div class="brand-row">
-        <div class="logo-mark big" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9.5 3h5v6.5H21v5h-6.5V21h-5v-6.5H3v-5h6.5z" fill="currentColor"/></svg></div>
-        <div><h1>MediQueue</h1><p class="muted">Emergency department queue &amp; triage</p></div>
-      </div>
+  <section class="login-wall" aria-label="MediQueue">
+    <div>
+      <div class="enamel-plate" aria-hidden="true"><span class="hi" lang="hi">आपातकालीन विभाग</span><span class="en">Emergency</span></div>
+      <h1 style="margin-top:28px">MediQueue</h1>
+      <p class="lede">The emergency department queue that sends each free doctor the most urgent patient, keeps everyone else moving up, and tells the waiting room the truth about how long it will take.</p>
+    </div>
+    <div class="doors" aria-hidden="true">
+      <div class="door"><span class="door-room">1</span><span class="door-name">Dr. Kavita Rao</span>
+        <span class="slider busy" data-pos="0"><span class="slider-thumb"></span><span>Busy</span><span>Free</span><span>Off</span></span></div>
+      <div class="door"><span class="door-room">3</span><span class="door-name">Dr. Anand Iyer</span>
+        <span class="slider busy" data-pos="0"><span class="slider-thumb"></span><span>Busy</span><span>Free</span><span>Off</span></span></div>
+    </div>
+  </section>
+  <main class="login-side">
+    <div class="login-card panel">
+      <h2>Staff sign in</h2>
+      <p>Triage desk, doctors' rooms, bed board and reports.</p>
       {% with messages = get_flashed_messages() %}
-        {% for msg in messages %}<div class="callout danger flash" role="alert"><span>{{ msg }}</span></div>{% endfor %}
+        {% for msg in messages %}<div class="callout danger flash" role="alert" style="margin-bottom:12px"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg><span>{{ msg }}</span></div>{% endfor %}
       {% endwith %}
       <form method="post" class="login-form">
         <div class="field"><label for="username">Username</label>
@@ -28,17 +40,17 @@
         <button type="submit" class="btn btn-primary btn-lg btn-block">Sign in</button>
       </form>
       <div class="demo-logins">
-        <p>Demo accounts, password <code>demo123</code>. Tap one to fill the form.</p>
+        <p>Demo accounts, password <code>demo123</code>. Pick one to fill the form.</p>
         <div class="chip-row">
-          <button type="button" class="chip chip-btn" data-demo="priya">priya · nurse</button>
-          <button type="button" class="chip chip-btn" data-demo="rao">rao · doctor</button>
-          <button type="button" class="chip chip-btn" data-demo="iyer">iyer · doctor</button>
-          <button type="button" class="chip chip-btn" data-demo="admin">admin</button>
+          <button type="button" class="chip-btn" data-demo="priya"><b>priya</b><small>Triage nurse</small></button>
+          <button type="button" class="chip-btn" data-demo="iyer"><b>iyer</b><small>Doctor · Room 3</small></button>
+          <button type="button" class="chip-btn" data-demo="rao"><b>rao</b><small>Doctor · Room 1</small></button>
+          <button type="button" class="chip-btn" data-demo="admin"><b>admin</b><small>Reports &amp; settings</small></button>
         </div>
       </div>
+      <a class="board-link" href="{{ url_for('board') }}">Open the waiting-room display
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
     </div>
-    <a class="board-link" href="{{ url_for('board') }}">Open the waiting-room display
-      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
   </main>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>

@@ -5,3 +5,4 @@ __pycache__/
 mediqueue.db*
 simulate.py
 ai/train.py
+DESIGN.md

@@ -3,23 +3,12 @@
 {% block heading %}Reports &amp; settings{% endblock %}
 {% block subheading %}How the last 12 hours went, how the scheduler and the AI were evaluated, and the concurrency test.{% endblock %}
 {% block content %}
-<div class="stat-grid" id="admin-stats"><div class="skeleton" aria-hidden="true"><i style="height:92px"></i></div></div>
+<p class="census-line" id="admin-stats" aria-live="polite"><span class="lead">Last 12 hours</span> loading…</p>
 
-<div class="grid-2">
-  <section class="card" aria-labelledby="c1">
-    <div class="card-head"><h2 id="c1">Average wait by triage level</h2><span class="hint">minutes · all visits</span></div>
-    <div id="chart-wait-esi"></div>
-  </section>
-  <section class="card" aria-labelledby="c2">
-    <div class="card-head"><h2 id="c2">Arrivals in the last 12 hours</h2><span class="hint">patients per hour</span></div>
-    <div id="chart-hourly"></div>
-  </section>
-</div>
-
-<h2 class="page-section">Scheduler evaluation <span class="muted">{{ simulation.config.days if simulation else '' }} simulated 12-hour shifts, {{ simulation.config.doctors if simulation else '' }} doctors</span></h2>
+<h2 class="page-section">Scheduler evaluation <span>{{ simulation.config.days if simulation else '' }} simulated 12-hour shifts, {{ simulation.config.doctors if simulation else '' }} doctors</span></h2>
 {% if simulation %}
-<section class="card" aria-label="Scheduler comparison table">
-  <div class="table-wrap"><table>
+<section class="panel" aria-label="Scheduler comparison table">
+  <div class="table-wrap"><table class="policy-table">
     <thead>
       <tr><th rowspan="2">Policy</th><th class="num" rowspan="2">Mean wait</th><th class="num" rowspan="2">ESI 1–2<br>mean wait</th>
         <th class="num" rowspan="2">ESI 4–5<br>95th pct</th><th class="num" rowspan="2">Worst<br>per shift</th>
@@ -29,7 +18,7 @@
     <tbody>
     {% for key, p in simulation.policies.items() %}
       <tr class="{{ 'selected' if key == 'mediqueue' }}">
-        <td><b>{{ p.label }}</b></td>
+        <td>{{ p.label }}</td>
         <td class="num">{{ '%.1f'|format(p.mean_wait) }}</td>
         <td class="num">{{ '%.1f'|format(p.critical_wait) }}</td>
         <td class="num">{{ '%.0f'|format(p.low_priority_p95) }}</td>
@@ -40,99 +29,113 @@
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="card-sub" style="margin:12px 0 0">All times in minutes until a doctor first sees the patient, grouped by the patient's <b>true</b> urgency. Run <code>python simulate.py</code> to regenerate.</p>
+  <p class="scroll-hint">Scroll sideways to see every column.</p>
+  <p class="hint" style="margin-top:12px">All times in minutes until a doctor first sees the patient, grouped by the patient's <b>true</b> urgency. Run <code>python simulate.py</code> to regenerate.</p>
 </section>
-<div class="grid-2 section-gap">
-  <section class="card" aria-labelledby="c3">
-    <div class="card-head"><h2 id="c3">Critical vs low-priority patients</h2><span class="hint">minutes</span></div>
+<div class="grid-2">
+  <section class="panel" aria-labelledby="c3">
+    <div class="panel-head"><h2 id="c3">Critical vs low-priority patients</h2><span class="hint">minutes · ours in green</span></div>
     <div class="chart-pair">
-      <div><h4>ESI 1–2 mean wait</h4><div id="chart-critical"></div></div>
-      <div><h4>ESI 4–5 95th percentile wait</h4><div id="chart-tail"></div></div>
+      <div><h3>ESI 1–2 mean wait</h3><div id="chart-critical" class="chart-scroll"></div></div>
+      <div><h3>ESI 4–5 95th percentile wait</h3><div id="chart-tail" class="chart-scroll"></div></div>
     </div>
   </section>
-  <section class="card" aria-labelledby="c4">
-    <div class="card-head"><h2 id="c4">Choosing the aging interval</h2><span class="hint">MediQueue policy, 25 shifts</span></div>
+  <section class="panel" aria-labelledby="c4">
+    <div class="panel-head"><h2 id="c4">Choosing the aging interval</h2><span class="hint">25 shifts · 30 min chosen</span></div>
     <div class="chart-pair">
-      <div><h4>ESI 4–5 95th percentile wait (min)</h4><div id="chart-aging-tail"></div></div>
-      <div><h4>ESI 3 seen on time (%)</h4><div id="chart-aging-esi3"></div></div>
+      <div><h3>ESI 4–5 95th percentile wait (min)</h3><div id="chart-aging-tail" class="chart-scroll"></div></div>
+      <div><h3>ESI 3 seen on time (%)</h3><div id="chart-aging-esi3" class="chart-scroll"></div></div>
     </div>
   </section>
 </div>
 {% else %}
-<div class="card"><div class="empty"><strong>No evaluation yet</strong><p>Run <code>python simulate.py</code> to compare the scheduling policies.</p></div></div>
+<section class="panel"><div class="empty"><strong>No evaluation yet</strong><p>Run <code>python simulate.py</code> to compare the scheduling policies.</p></div></section>
 {% endif %}
 
-<h2 class="page-section">AI models</h2>
-<div class="grid-3">
-  {% if metrics %}
-  <section class="card" aria-labelledby="m1">
-    <div class="card-head"><h2 id="m1">Triage suggestion</h2><span class="hint">5-fold CV, {{ metrics.samples }} cases</span></div>
-    <div class="mini-stats" style="grid-template-columns:1fr 1fr">
-      <div class="mini-stat"><span>Accuracy</span><b>{{ '%.1f'|format(metrics.safe_accuracy * 100) }}%</b></div>
-      <div class="mini-stat"><span>Under-triage</span><b>{{ '%.1f'|format(metrics.safe_under_triage * 100) }}%</b></div>
-      <div class="mini-stat"><span>NEWS2 only</span><b>{{ '%.1f'|format(metrics.baseline_accuracy * 100) }}%</b></div>
-      <div class="mini-stat"><span>Within ±1 level</span><b>{{ '%.1f'|format(metrics.within_one * 100) }}%</b></div>
-    </div>
-    <p class="card-sub" style="margin:0">With the safety margin and red-flag rules. The plain model: {{ '%.1f'|format(metrics.accuracy * 100) }}% accuracy, {{ '%.1f'|format(metrics.under_triage * 100) }}% under-triage.</p>
-  </section>
-  <section class="card" aria-labelledby="m2">
-    <div class="card-head"><h2 id="m2">Consultation time</h2></div>
-    <div class="mini-stats" style="grid-template-columns:1fr 1fr">
-      <div class="mini-stat"><span>Mean abs. error</span><b>{{ '%.1f'|format(metrics.time_mae) }} min</b></div>
-      <div class="mini-stat"><span>Within 5 min</span><b>{{ '%.0f'|format(metrics.time_within_5 * 100) }}%</b></div>
-    </div>
-    <p class="card-sub" style="margin:0">Average consultation in the data: {{ '%.0f'|format(metrics.time_mean) }} min.</p>
-  </section>
-  {% endif %}
-  {% if simulation and simulation.wait_model %}
-  {% set w = simulation.wait_model %}
-  <section class="card" aria-labelledby="m3">
-    <div class="card-head"><h2 id="m3">Waiting-time estimate</h2><span class="hint">{{ w.test_rows }} test patients</span></div>
-    <div class="mini-stats" style="grid-template-columns:1fr 1fr">
-      <div class="mini-stat"><span>Schedule replay</span><b>±{{ '%.1f'|format(w.plain.mae) }} min</b></div>
-      <div class="mini-stat"><span>With ML correction</span><b>±{{ '%.1f'|format(w.model.mae) }} min</b></div>
-    </div>
-    <p class="card-sub" style="margin:0">Mean absolute error of the time shown on the waiting-room display.</p>
-  </section>
-  {% endif %}
-</div>
-<div class="grid-2 section-gap">
-  <section class="card" aria-labelledby="m4"><div class="card-head"><h2 id="m4">AI suggestion vs the nurse's final level</h2><span class="hint">from the visits table</span></div><div id="agreement"></div></section>
-  <section class="card" aria-labelledby="m5"><div class="card-head"><h2 id="m5">What the triage model looks at</h2><span class="hint">Gini importance</span></div><div id="chart-importance"></div></section>
-</div>
-
 <h2 class="page-section" id="race">Concurrency test</h2>
-<div class="split">
-  <section class="card" aria-labelledby="r1">
-    <div class="card-head"><h2 id="r1">Many staff clicking at the same moment</h2>
+<div class="split wide">
+  <section class="panel" aria-labelledby="r1">
+    <div class="panel-head"><h2 id="r1">Many staff clicking at once</h2>
       <form method="post" action="{{ url_for('admin_race_test') }}" data-loading-text="Running, about 10 s"><input type="hidden" name="trials" value="15">
-        <button type="submit" class="btn btn-primary btn-sm">Run the test again</button></form>
+        <button type="submit" class="btn btn-enamel btn-sm">Run the test again</button></form>
     </div>
     {% if race %}
-    <div class="table-wrap"><table>
+    <div class="table-wrap"><table class="race-table">
       <thead><tr><th>Scenario</th><th>Mode</th><th class="num">Threads</th><th class="num">Trials</th><th class="num">Conflicts</th><th class="num">Avg time</th></tr></thead>
       <tbody>
         {% for scen, label in [('dispatch', 'Doctors press “Call next”'), ('beds', 'Admissions, 3 free beds')] %}
           {% for mode in ['unsafe', 'safe'] %}{% set x = race[scen][mode] %}
-          <tr><td>{{ label }}</td><td>{% if mode == 'safe' %}<span class="badge ok">with lock</span>{% else %}<span class="badge bad">no lock</span>{% endif %}</td>
+          <tr><td>{{ label }}</td><td>{% if mode == 'safe' %}<span class="stamp green">with lock</span>{% else %}<span class="stamp red">no lock</span>{% endif %}</td>
             <td class="num">{{ x.workers }}</td><td class="num">{{ x.trials }}</td>
             <td class="num {{ 'worst' if x.conflicts else 'best' }}">{{ x.conflicts }}</td><td class="num">{{ '%.1f'|format(x.avg_ms) }} ms</td></tr>
           {% endfor %}
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="card-sub" style="margin:12px 0 0">A conflict means the same patient went to two doctors, or the same bed to two patients. The test runs on a scratch database, never on live data.</p>
+    <p class="hint" style="margin-top:12px">A conflict means the same patient went to two doctors, or the same bed to two patients. The test runs on a scratch database, never on live data.</p>
     {% else %}<div class="empty"><strong>Not run yet</strong><p>Run the test to see what happens with and without the lock.</p></div>{% endif %}
   </section>
-  <section class="card" aria-labelledby="s1">
-    <div class="card-head"><h2 id="s1">Scheduler settings</h2></div>
+  <section class="panel" aria-labelledby="s1">
+    <div class="panel-head"><h2 id="s1">Scheduler settings</h2></div>
     <form method="post" action="{{ url_for('admin_settings') }}" class="stack" style="gap:12px">
       <div class="field"><label for="aging-input">Aging interval (minutes)</label>
         <input type="number" inputmode="numeric" name="aging_minutes" min="5" max="240" value="{{ aging }}" id="aging-input" aria-describedby="aging-help"></div>
-      <p class="hint" id="aging-help">A waiting ESI 4–5 patient moves up one level every time this many minutes pass, up to level 3. We chose 30 after the aging sweep above.</p>
+      <p class="hint" id="aging-help">A waiting ESI 4–5 patient moves up one level each time this many minutes pass, up to level 3. We chose 30 after the aging sweep above.</p>
       <button type="submit" class="btn btn-primary">Save interval</button>
     </form>
   </section>
 </div>
+
+<h2 class="page-section">AI models</h2>
+<div class="grid-3">
+  {% if metrics %}
+  <section class="panel" aria-labelledby="m1">
+    <div class="panel-head"><h2 id="m1">Triage suggestion</h2><span class="hint">5-fold CV · {{ metrics.samples }} cases</span></div>
+    <dl class="metric-row">
+      <div><dt>Accuracy</dt><dd>{{ '%.1f'|format(metrics.safe_accuracy * 100) }}%</dd></div>
+      <div><dt>Under-triage</dt><dd>{{ '%.1f'|format(metrics.safe_under_triage * 100) }}%</dd></div>
+      <div><dt>NEWS2 only</dt><dd>{{ '%.1f'|format(metrics.baseline_accuracy * 100) }}%</dd></div>
+      <div><dt>Within ±1 level</dt><dd>{{ '%.1f'|format(metrics.within_one * 100) }}%</dd></div>
+    </dl>
+    <p class="hint">With the safety margin and red-flag rules. The plain model: {{ '%.1f'|format(metrics.accuracy * 100) }}% accuracy, {{ '%.1f'|format(metrics.under_triage * 100) }}% under-triage.</p>
+  </section>
+  <section class="panel" aria-labelledby="m2">
+    <div class="panel-head"><h2 id="m2">Consultation time</h2></div>
+    <dl class="metric-row">
+      <div><dt>Mean abs. error</dt><dd>{{ '%.1f'|format(metrics.time_mae) }} min</dd></div>
+      <div><dt>Within 5 min</dt><dd>{{ '%.0f'|format(metrics.time_within_5 * 100) }}%</dd></div>
+    </dl>
+    <p class="hint">Average consultation in the data: {{ '%.0f'|format(metrics.time_mean) }} min.</p>
+  </section>
+  {% endif %}
+  {% if simulation and simulation.wait_model %}
+  {% set w = simulation.wait_model %}
+  <section class="panel" aria-labelledby="m3">
+    <div class="panel-head"><h2 id="m3">Waiting-time estimate</h2><span class="hint">{{ w.test_rows }} test patients</span></div>
+    <dl class="metric-row">
+      <div><dt>Schedule replay</dt><dd>±{{ '%.1f'|format(w.plain.mae) }} min</dd></div>
+      <div><dt>With ML correction</dt><dd>±{{ '%.1f'|format(w.model.mae) }} min</dd></div>
+    </dl>
+    <p class="hint">Mean absolute error of the time shown on the waiting-room display.</p>
+  </section>
+  {% endif %}
+</div>
+<div class="grid-2">
+  <section class="panel" aria-labelledby="m4"><div class="panel-head"><h2 id="m4">AI suggestion vs nurse's final level</h2><span class="hint">from the visits table</span></div><div id="agreement"></div></section>
+  <section class="panel" aria-labelledby="m5"><div class="panel-head"><h2 id="m5">What the triage model looks at</h2><span class="hint">Gini importance</span></div><div id="chart-importance"></div></section>
+</div>
+
+<h2 class="page-section">This shift <span>live from the visits table</span></h2>
+<div class="grid-2">
+  <section class="panel" aria-labelledby="c1">
+    <div class="panel-head"><h2 id="c1">Average wait by triage level</h2><span class="hint">minutes · all visits</span></div>
+    <div id="chart-wait-esi" class="chart-scroll"></div>
+  </section>
+  <section class="panel" aria-labelledby="c2">
+    <div class="panel-head"><h2 id="c2">Arrivals, last 12 hours</h2><span class="hint">patients per hour</span></div>
+    <div id="chart-hourly" class="chart-scroll"></div>
+  </section>
+</div>
+
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='charts.js') }}"></script>{% endblock %}

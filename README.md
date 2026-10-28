@@ -70,17 +70,24 @@ npx vercel deploy --prod
 
 ## Suggested demo (8–10 minutes)
 
-1. **Triage desk** (log in as `priya`): click *Fill an example patient*, show the AI suggestion, the reasons and the
-   red outlines on abnormal vitals. Change the level to show that an override needs a reason. Click *Issue token and add to queue*.
-2. **Queue** below the form: point out the ESI 5 patient who has *aged to 3* and the re-check reminders.
-3. **Doctor console** (log in as `iyer` in a second browser or incognito window): *Call next patient*.
+1. **Triage desk** (log in as `priya`): the door plates at the top show each room as Busy / Free / Off. Click
+   *Fill an example patient*, show the AI level plate, the reasons and the red "out of range" vitals. Pick a
+   different level to show the signed delta ("AI suggested ESI 2 · you chose ESI 1 · up 1 level") and the required reason.
+   Click *Issue token and add to queue*.
+2. **Queue** below the form: each bar is time waited drawn to scale against the ESI target tick. Point out the
+   ESI 5 patient tagged *now 3* (aging) and the *AI 4 · up 1* override tag.
+3. **Doctor console** (log in as `iyer` in a second browser or incognito window): *Call next patient*. Watch the
+   nurse's queue rows slide up, Room 3's slider glide to Busy, and the new token glow on the waiting-room display.
 4. **Preemption**: as the nurse, triage a patient with SpO₂ 82 and “responds to pain” → red flag, ESI 1.
-   The doctor treating the least urgent patient gets the red *Pause and see T0xx* banner.
+   The doctor treating the least urgent patient gets the red *Pause and see T0xx* alarm, which drops in and pulses twice.
 5. **Beds**: click *Admit to observation* on the doctor console, then on the bed board click *Release bed* and then *Mark clean* –
    the semaphore value and boarding queue update.
 6. **Waiting-room display** (`/board`): tokens and estimated ranges, no names.
 7. **Reports** (log in as `admin`): scheduler comparison, aging sweep, model accuracy, and *Run test again*
    for the concurrency test (no lock → double assignments, with lock → 0).
+
+The interface design ("Ward Corridor": green dado rail, cobalt enamel signs, door plates with an IN/OUT slider)
+is documented in `DESIGN.md`; motion only marks state changes and respects the reduce-motion setting.
 
 ## Project layout
 

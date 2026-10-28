@@ -1,24 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Bed board{% endblock %}
-{% block heading %}Observation bed board{% endblock %}
+{% block heading %}Observation beds{% endblock %}
 {% block subheading %}The beds work like a counting semaphore: admitting takes one, and a cleaned bed goes straight to the next boarding patient.{% endblock %}
 {% block content %}
-<div class="stat-grid" id="bed-stats"><div class="skeleton" aria-hidden="true"><i style="height:92px"></i></div></div>
+<dl class="census" id="bed-stats"><div><div class="skeleton" aria-hidden="true"><i style="height:60px"></i></div></div></dl>
 <div class="split">
-  <section class="card" aria-labelledby="beds-title">
-    <div class="card-head"><h2 id="beds-title">Beds</h2><span class="hint">Release, then clean, then the bed is free again</span></div>
-    <div class="bed-grid" id="bed-grid"></div>
+  <section class="panel" aria-labelledby="beds-title">
+    <div class="panel-head"><h2 id="beds-title">Beds</h2><span class="hint">Release, then clean, then the bed is free again</span></div>
+    <div class="beds" id="bed-grid"></div>
   </section>
   <div class="stack">
-    <section class="card" aria-labelledby="board-title">
-      <div class="card-head"><h2 id="board-title">Boarding queue</h2><span class="badge warn" id="boarding-count">0</span></div>
-      <p class="card-sub">Patients a doctor has admitted who are still waiting for a bed. Most urgent first.</p>
-      <div id="boarding" class="queue-list"></div>
+    <section class="panel" aria-labelledby="board-title">
+      <div class="panel-head"><h2 id="board-title">Boarding queue</h2><span class="tag warn" id="boarding-count">0</span></div>
+      <p class="hint" style="margin:-6px 0 8px">Admitted patients still waiting for a bed, most urgent first. This is the semaphore's blocked queue.</p>
+      <div id="boarding" class="list"></div>
     </section>
-    <section class="card" aria-labelledby="safe-title">
-      <div class="card-head"><h2 id="safe-title">How allocation stays safe</h2></div>
-      <p class="hint" style="font-size:13px;color:var(--text-2)">Every admission and every “Mark clean” runs inside one database transaction that holds the write lock.
-        If two staff members click at the same moment they are served one after the other, so a bed can never be given to two patients.</p>
+    <section class="panel" aria-labelledby="safe-title">
+      <div class="panel-head"><h2 id="safe-title">Why a bed is never given twice</h2></div>
+      <p class="prose">Every admission and every “Mark clean” runs inside one database transaction that holds the write lock.
+        If two staff members click at the same moment they are served one after the other, so a bed can never go to two patients.</p>
     </section>
   </div>
 </div>

@@ -3,15 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b1324">
+  <meta name="theme-color" content="#1d3e9a">
   <title>Waiting room · MediQueue ED</title>
+  <link rel="preload" href="{{ url_for('static', filename='fonts/archivo-latin-var.woff2') }}" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
 <body class="board-page" data-page="board">
   <header class="board-head">
-    <div class="row" style="flex-wrap:nowrap">
-      <div class="logo-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9.5 3h5v6.5H21v5h-6.5V21h-5v-6.5H3v-5h6.5z" fill="currentColor"/></svg></div>
-      <div><h1>Emergency Department</h1><p>Patients are seen by urgency, not only by arrival time.</p></div>
+    <div>
+      <p class="hi" lang="hi">आपातकालीन विभाग</p>
+      <h1>Emergency Department</h1>
+      <p>Patients are seen by urgency, not only by arrival time.</p>
     </div>
     <div class="board-clock" id="board-clock" aria-hidden="true">--:--</div>
   </header>
