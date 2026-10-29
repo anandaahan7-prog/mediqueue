@@ -12,7 +12,9 @@ Operating Systems course project.
 
 A web app for a hospital casualty ward. Nurses triage patients with help from an AI model, doctors press
 **“Call next patient”** and a priority scheduler decides who they see, and the waiting room gets a live display
-with estimated waits.
+with estimated waits. Patients sign in on their own phone (QR code on the token slip, or token + last 4 digits of
+their phone) to see their place in the queue, tell the nurse they feel worse, step away for a few minutes without
+losing their place, get a full-screen alert when they are called, or say they are leaving.
 
 The OS part is deliberately small and real:
 
@@ -134,4 +136,5 @@ schema.sql        tables, constraints, indexes, queue view
 ai/               dataset generator, training, runtime models, wait-time model
 templates/ public/static/  the user interface (public/ is served by the Vercel CDN)
 tests/            26 end-to-end tests
+docs/             IEEE paper and review documents (PDF)
 ```
